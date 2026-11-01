@@ -177,7 +177,7 @@
   .botao-google { display: flex; justify-content: center; min-height: 44px; }
 
   /* Escolha do modo e leitura pela câmera */
-  .opcoes-modo { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); max-width: 820px; margin: 0 auto; }
+  .opcoes-modo { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); max-width: 900px; margin: 0 auto; }
   .cartao-modo {
     display: grid; gap: 8px; min-height: 150px; padding: 24px; text-align: left; align-content: center;
     border: 2px solid #cfe3d6; border-radius: 18px; background: #fff; color: var(--texto); box-shadow: 0 7px 18px #1f38210f;
@@ -185,13 +185,26 @@
   .cartao-modo strong { font-size: 1.3rem; color: #12592f; }
   .cartao-modo span { color: var(--texto-2); }
   .cartao-modo:active { transform: scale(.985); background: var(--verde-claro); }
-  .quadro-camera { max-width: 720px; margin: 0 auto; }
+  .quadro-camera { position: relative; max-width: 720px; margin: 0 auto; }
   .quadro-camera video { display: block; width: 100%; max-height: 62vh; background: #111; border-radius: 14px; }
   .estado-camera { max-width: 720px; margin: 14px auto 0; padding: 14px 18px; border-radius: 14px; background: #e9eef6; color: #23405f; font-size: 1.25rem; font-weight: 800; text-align: center; }
   .estado-camera.ok { background: #d9f2e3; color: #0f6b38; }
   .estado-camera.atencao { background: #fff3da; color: #7a5b00; }
   .aviso-leitura { margin: 0 0 12px; padding: 12px 16px; border-radius: 12px; background: #fff0d6; border: 1px solid #f2b35a; color: #7a4a00; font-weight: 700; }
   td.duvida { box-shadow: inset 0 0 0 3px #f28c28; }
+  /* Correção em massa: o cartão cobre a imagem para ser lido de longe, com o aparelho no suporte. */
+  .em-massa .quadro-camera { min-height: min(62vh, 420px); border-radius: 14px; background: #111; }
+  .em-massa .faixa-aluno { max-width: 720px; margin-left: auto; margin-right: auto; }
+  .cartao-massa { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 16px; overflow: auto; border-radius: 14px; text-align: center; }
+  .cartao-massa p { margin: 0; overflow-wrap: anywhere; }
+  .cartao-massa .linha-botoes { width: 100%; margin-top: 12px; }
+  .cartao-massa.ok { background: #d9f2e3f5; color: #0f6b38; }
+  .cartao-massa.atencao { background: #fff3daf8; color: #7a5b00; }
+  .cartao-massa.falha { background: #f7d9d9f8; color: #8a2a2a; }
+  .massa-titulo { font-size: 1.25rem; font-weight: 800; }
+  .massa-nome { font-size: clamp(1.35rem, 5vw, 1.9rem); font-weight: 800; color: var(--texto); }
+  .massa-nota { font-size: clamp(2.4rem, 11vw, 4.5rem); font-weight: 800; line-height: 1.15; }
+  .massa-texto { font-size: 1.15rem; font-weight: 700; }
   .diagnostico { max-width: 720px; margin: 12px auto 0; padding: 10px; border-radius: 10px; background: #fff; border: 1px solid #dce8e0; font: 12px/1.35 Consolas, monospace; white-space: pre-wrap; word-break: break-word; -webkit-user-select: text; user-select: text; }
 </style>
 </head>
@@ -221,6 +234,8 @@
         <button id="btnSairDaConta" class="botao primario" type="button">Sair da conta Google</button>
         <button id="btnContinuar" class="botao secundario" type="button" disabled>Continuar</button>
       </div>
+      <p class="texto-habilitar" style="margin-top: 26px">Se o aparelho vai ficar com você, pode ir direto à correção em massa, sem sair da conta. Nesse caso, saia dela antes de entregar o aparelho aos alunos.</p>
+      <div class="linha-botoes"><button id="btnMassaDireto" class="botao secundario" type="button">Correção em massa</button></div>
     </section>
 
     <section id="telaModo" class="tela" hidden>
@@ -234,12 +249,20 @@
           <strong>Leitura automática</strong>
           <span>O tablet fica no suporte, a câmera lê a folha e o aluno só confere e envia.</span>
         </button>
+        <button id="btnModoMassa" class="cartao-modo" type="button">
+          <strong>Correção em massa</strong>
+          <span>Para o professor: o aparelho fica no suporte e cada folha colocada é lida e salva sozinha.</span>
+        </button>
       </div>
     </section>
 
     <section id="telaCamera" class="tela" hidden>
+      <div id="faixaMassa" class="faixa-aluno" hidden><strong id="provaMassa"></strong><span id="contagemMassa" class="chip"></span></div>
       <div id="avisoCamera" class="aviso" hidden></div>
-      <div class="quadro-camera"><video id="video" autoplay playsinline muted></video></div>
+      <div class="quadro-camera">
+        <video id="video" autoplay playsinline muted></video>
+        <div id="cartaoMassa" class="cartao-massa" hidden aria-live="polite"></div>
+      </div>
       <p id="estadoCamera" class="estado-camera" aria-live="polite">Abrindo a câmera…</p>
       <div class="linha-botoes">
         <button id="btnDigitarCodigo" class="botao secundario" type="button">Digitar o código</button>
@@ -280,7 +303,7 @@
     <section id="telaRespostas" class="tela" hidden>
       <div class="faixa-aluno"><strong id="nomeAluno"></strong><span id="statusFeedback" class="chip"></span></div>
       <p id="avisoLeitura" class="aviso-leitura" hidden></p>
-      <p class="instrucao">Toque nas células para marcar <strong>exatamente o que você respondeu na folha</strong>. Toque de novo para desmarcar.</p>
+      <p class="instrucao">Toque nas células para marcar <strong>exatamente o que está na folha</strong>. Toque de novo para desmarcar.</p>
       <div id="tabelas" class="tabelas"></div>
       <div id="resultado" class="resultado" aria-live="polite"></div>
     </section>
@@ -1033,7 +1056,8 @@
   const estado = { consultas: [], pub: null, codigo: '', dados: null, marcadas: new Map(), duvidas: new Map(), resultado: null, enviando: false, alterado: false, nota: null, entrando: false };
   const el = id => document.getElementById(id);
   let chaveDoTablet = '';   /* devolvida pelo GAS depois do login do professor; abre só as funções do aluno */
-  let modo = null;   /* 'manual' ou 'camera' */
+  let modo = null;   /* 'manual', 'camera' ou 'massa' */
+  const usaCamera = () => modo === 'camera' || modo === 'massa';
   let temporizadorInatividade = null;
 
   function esc(valor) {
@@ -1154,17 +1178,19 @@
     const area = el('modalCorpo');
     area.innerHTML = '';
     if (typeof corpo === 'string') area.innerHTML = corpo; else if (corpo) area.appendChild(corpo);
-    const barra = el('modalBotoes');
+    montarBotoes(el('modalBotoes'), botoes, botao => { if (botao.manterAberto !== true) fecharModal(); });
+    el('modal').hidden = false;
+  }
+  function montarBotoes(barra, botoes, antesDaAcao) {
     barra.innerHTML = '';
     botoes.forEach(botao => {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'botao ' + (botao.classe || 'secundario');
       b.textContent = botao.rotulo;
-      b.addEventListener('click', () => { if (botao.manterAberto !== true) fecharModal(); if (botao.acao) botao.acao(); });
+      b.addEventListener('click', () => { antesDaAcao(botao); if (botao.acao) botao.acao(); });
       barra.appendChild(b);
     });
-    el('modal').hidden = false;
   }
   function fecharModal() { el('modal').hidden = true; }
   function confirmar(titulo, texto, rotuloSim, classeSim) {
@@ -1188,7 +1214,7 @@
       /* Caso comum: uma única prova aberta (uma turma por vez). Vai direto para o código ou para a câmera;
        * "Sair", "Concluir" e a inatividade também voltam para essa tela. Com a câmera, a prova escolhida
        * pelo professor continua valendo para os próximos alunos. */
-      const anterior = modo === 'camera' ? estado.consultas.find(consulta => consulta.id === camera.pubId) : null;
+      const anterior = usaCamera() ? estado.consultas.find(consulta => consulta.id === camera.pubId) : null;
       if (anterior || estado.consultas.length === 1) {
         estado.pub = anterior || estado.consultas[0];
         irParaEntrada(aviso);
@@ -1216,7 +1242,7 @@
   el('btnAtualizarLista').addEventListener('click', () => carregarProvas());
 
   function irParaEntrada(aviso) {
-    if (modo === 'camera') abrirCamera(aviso);
+    if (usaCamera()) abrirCamera(aviso);
     else abrirTelaCodigo('', aviso);
   }
 
@@ -1228,7 +1254,7 @@
     el('avisoCodigo').hidden = !aviso;
     el('avisoCodigo').textContent = aviso || '';
     el('erroCodigo').textContent = mensagemErro || '';
-    el('btnVoltarProvas').hidden = modo !== 'camera' && estado.consultas.length <= 1;   /* com uma só prova não há lista para voltar */
+    el('btnVoltarProvas').hidden = !usaCamera() && estado.consultas.length <= 1;   /* com uma só prova não há lista para voltar */
     atualizarVisorCodigo();
     mostrarTela('telaCodigo');
   }
@@ -1266,7 +1292,7 @@
     else if (evento.key === 'Backspace') digitarCodigo('apagar');
     else if (evento.key === 'Enter' && estado.codigo.length === 6) entrar();
   });
-  el('btnVoltarProvas').addEventListener('click', () => { if (modo === 'camera') abrirCamera(); else carregarProvas(); });
+  el('btnVoltarProvas').addEventListener('click', () => { if (usaCamera()) abrirCamera(); else carregarProvas(); });
   el('btnEntrar').addEventListener('click', () => entrar());
 
   /* peloQR: o código veio da folha, não foi digitado, então não há o que confirmar. */
@@ -1280,7 +1306,7 @@
       const r = await chamar('entrarNaConsulta', [estado.pub.id, estado.codigo], 'Conferindo o código...');
       if (r.status !== 'ok') { voltarComAviso(r.mensagem); return; }
       estado.dados = r;
-      if (peloQR) { abrirRespostas(); return; }
+      if (peloQR || modo === 'massa') { abrirRespostas(); return; }
       el('nomeConfirmar').textContent = r.nome;
       mostrarTela('telaConfirmar');
     } catch (erro) {
@@ -1371,7 +1397,7 @@
       aviso.textContent = `A câmera ficou em dúvida em ${rotulos.join(', ')}. Confira as células em laranja e toque na resposta certa.`;
       aviso.hidden = false;
     } else if (acabouDeLer) {
-      aviso.textContent = 'Folha lida. Confira se está tudo igual à sua folha antes de enviar.';
+      aviso.textContent = 'Folha lida. Confira se está tudo igual à folha antes de enviar.';
       aviso.hidden = false;
     } else if (aviso.textContent.startsWith('A câmera')) {
       aviso.hidden = true;
@@ -1445,17 +1471,17 @@
     }
 
     const chip = el('statusFeedback');
-    chip.textContent = d.entregue ? 'Prova entregue' : `Feedbacks disponíveis: ${restantes} de ${d.feedbacksPermitidos}`;
+    chip.textContent = d.entregue ? 'Prova entregue' : modo === 'massa' ? 'Correção em massa' : `Feedbacks disponíveis: ${restantes} de ${d.feedbacksPermitidos}`;
     chip.classList.toggle('entregue', !!d.entregue);
 
-    el('btnFeedback').hidden = !!d.entregue;
+    el('btnFeedback').hidden = !!d.entregue || modo === 'massa';
     el('btnEntregar').hidden = !!d.entregue;
     el('btnVerNota').hidden = !d.entregue || !estado.nota;
     el('btnConcluir').hidden = !d.entregue;
     el('btnFeedback').disabled = bloqueado || restantes <= 0;
     el('btnFeedback').textContent = restantes > 0 ? `Pedir feedback (${restantes})` : 'Sem feedbacks restantes';
     el('btnEntregar').disabled = bloqueado;
-    el('btnEntregar').textContent = estado.enviando ? 'Enviando...' : 'Entregar a prova';
+    el('btnEntregar').textContent = estado.enviando ? 'Enviando...' : modo === 'massa' ? 'Salvar a correção' : 'Entregar a prova';
   }
 
   function mostrarResultado(texto, tipo) {
@@ -1572,6 +1598,7 @@
 
   async function enviar(acao) {
     const d = estado.dados;
+    let salvaNaMassa = null;
     estado.enviando = true;
     renderizar();
     mostrarResultado(acao === 'feedback' ? 'Corrigindo...' : 'Registrando a entrega...', '');
@@ -1586,6 +1613,8 @@
         d.feedbacksUsados = r.feedbacksUsados;
         mostrarFeedback(r, Math.max(0, r.feedbacksPermitidos - r.feedbacksUsados));
         setTimeout(() => el('resultado').scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      } else if (modo === 'massa') {
+        salvaNaMassa = r;
       } else {
         d.entregue = true;
         estado.nota = r.nota;
@@ -1601,6 +1630,10 @@
     } finally {
       estado.enviando = false;
       renderizar();
+    }
+    if (salvaNaMassa) {
+      folhaSalva(estado.codigo, d.nome, salvaNaMassa.nota);
+      carregarProvas();
     }
   }
 
@@ -1622,6 +1655,7 @@
   }
 
   el('btnEntregar').addEventListener('click', async () => {
+    if (modo === 'massa') { enviar('entregar'); return; }
     const faltando = quesitosSemMarcacao();
     const aviso = faltando.length
       ? `Atenção: você não marcou ${faltando.join(', ')}. Quesitos sem marcação não pontuam. `
@@ -1641,7 +1675,7 @@
   let travaTela = null;
 
   function sessaoAtiva() {
-    return !!(estado.dados && !estado.dados.entregue && !el('telaRespostas').hidden && estado.pub && estado.codigo);
+    return !!(modo !== 'massa' && estado.dados && !estado.dados.entregue && !el('telaRespostas').hidden && estado.pub && estado.codigo);
   }
 
   function iniciarSaida(tipo) {
@@ -1766,7 +1800,8 @@
     QUADROS_PARADOS: 2,      /* verificações seguidas na mesma posição antes de ler */
     QUADROS_SEM_FOLHA: 3,    /* verificações sem folha para considerar que ela foi retirada */
     PAUSA_RECUSA_MS: 700,    /* espera antes de tentar de novo quando a leitura é recusada */
-    PAUSA_ERRO_MS: 3500      /* tempo para ler o motivo quando a folha não foi reconhecida */
+    PAUSA_ERRO_MS: 3500,     /* tempo para ler o motivo quando a folha não foi reconhecida */
+    LEITURAS_DIFERENTES: 3   /* correção em massa: quantas vezes lê de novo antes de pedir conferência */
   };
   const camera = { fluxo: null, ciclo: null, pubId: null, leitura: null, retirar: false, codigoLido: null };
   const pausa = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -1813,6 +1848,7 @@
       return;
     }
     camera.pubId = estado.pub.id;
+    atualizarFaixaMassa();
     mostrarTela('telaCamera');
     el('avisoCamera').hidden = !aviso;
     el('avisoCamera').textContent = aviso || '';
@@ -1846,7 +1882,7 @@
   async function cicloDeEspera(ciclo) {
     const medidas = estado.pub.leitura;
     let anterior = null, parados = 0, semFolha = 0, voltas = 0;
-    mostrarEstadoCamera(camera.retirar ? 'Retire a folha para o próximo aluno.' : 'Coloque a folha sob a câmera.');
+    mostrarEstadoCamera(!camera.retirar ? 'Coloque a folha sob a câmera.' : modo === 'massa' ? 'Coloque a próxima folha.' : 'Retire a folha para o próximo aluno.');
     while (camera.ciclo === ciclo) {
       const inicio = performance.now();
       const quadro = document.hidden || !el('modal').hidden ? null : quadroDoVideo(CAMERA.LADO_VERIFICACAO);
@@ -1864,13 +1900,16 @@
             camera.retirar = false;
             anterior = null;
             parados = 0;
+            if (trocou) ocultarCartaoMassa();
             mostrarEstadoCamera('Coloque a folha sob a câmera.');
           }
         } else if (!folha) {
           anterior = null;
           parados = 0;
+          esquecerLeituraDaMassa();
           mostrarEstadoCamera('Coloque a folha sob a câmera.');
         } else {
+          ocultarCartaoMassa();
           parados = anterior && mesmaPosicao(anterior, folha) ? parados + 1 : 0;
           anterior = folha;
           if (parados >= CAMERA.QUADROS_PARADOS) {
@@ -1924,6 +1963,12 @@
       await pausa(leitura.erro ? CAMERA.PAUSA_ERRO_MS : CAMERA.PAUSA_RECUSA_MS);
       return;
     }
+    if (modo === 'massa') {
+      const confirmada = leituraConfirmada(leitura);
+      if (confirmada) await corrigirFolha(confirmada);
+      else mostrarEstadoCamera('Conferindo a leitura…');
+      return;
+    }
     pararEspera();
     camera.leitura = leitura;
     camera.retirar = true;
@@ -1936,16 +1981,164 @@
     }
   }
 
-  el('btnDigitarCodigo').addEventListener('click', () => { pararEspera(); camera.leitura = null; abrirTelaCodigo(); });
+  /* ----------------------------- Correção em massa ----------------------------- */
+  /* O professor deixa o aparelho no suporte e vai trocando as folhas. Sem aluno para conferir, a folha só é
+   * salva quando duas leituras seguidas dão o mesmo resultado, sem dúvidas. O cartão verde some sozinho
+   * quando a próxima folha aparece; os que precisam do professor esperam um toque, para nenhuma folha
+   * passar sem correção. Usa as mesmas funções do aluno: uma prova já entregue nunca é regravada. */
+  const massa = { corrigidas: new Set(), leitura: null, diferentes: 0 };
+
+  function esquecerLeituraDaMassa() {
+    massa.leitura = null;
+    massa.diferentes = 0;
+  }
+
+  const assinaturaDaLeitura = leitura => JSON.stringify([
+    leitura.qr, leitura.colunas.map(coluna => [coluna.r, coluna.tipo, coluna.linhas]), leitura.vf.map(item => [item.r, item.valor])
+  ]);
+
+  /* Devolve a leitura que pode seguir ou null para ler de novo. Se as leituras nunca coincidirem (uma marca
+   * no limite, por exemplo), segue a última, com o que mudou em dúvida para o professor conferir. */
+  function leituraConfirmada(leitura) {
+    const anterior = massa.leitura;
+    const iguais = anterior && assinaturaDaLeitura(anterior) === assinaturaDaLeitura(leitura);
+    if (anterior && !iguais) massa.diferentes += 1;
+    if (!iguais && massa.diferentes < CAMERA.LEITURAS_DIFERENTES) {
+      massa.leitura = leitura;
+      return null;
+    }
+    esquecerLeituraDaMassa();
+    return iguais ? leitura : comDiferencasEmDuvida(anterior, leitura);
+  }
+
+  function comDiferencasEmDuvida(anterior, leitura) {
+    const colunas = new Map(anterior.colunas.map(coluna => [coluna.r, coluna]));
+    const itens = new Map(anterior.vf.map(item => [item.r, item.valor]));
+    return Object.assign({}, leitura, {
+      colunas: leitura.colunas.map(coluna => {
+        const outra = colunas.get(coluna.r);
+        if (outra && outra.tipo === coluna.tipo && String(outra.linhas) === String(coluna.linhas)) return coluna;
+        return { r: coluna.r, tipo: 'duvida', linhas: [...new Set([...coluna.linhas, ...(outra ? outra.linhas : [])])] };
+      }),
+      vf: leitura.vf.map(item => (itens.get(item.r) === item.valor ? item : { r: item.r, valor: '?' }))
+    });
+  }
+
+  function atualizarFaixaMassa() {
+    const ativa = modo === 'massa';
+    el('telaCamera').classList.toggle('em-massa', ativa);
+    el('faixaMassa').hidden = !ativa;
+    if (!ativa) return;
+    el('provaMassa').textContent = estado.pub.prova;
+    el('contagemMassa').textContent = `${massa.corrigidas.size} de ${estado.pub.nAlunos} corrigidas agora`;
+  }
+
+  function mostrarCartaoMassa({ classe, titulo, nome, nota, texto, botoes }) {
+    const cartao = el('cartaoMassa');
+    cartao.className = 'cartao-massa ' + classe;
+    cartao.innerHTML = `<p class="massa-titulo">${esc(titulo)}</p>` +
+      (nome ? `<p class="massa-nome">${esc(nome)}</p>` : '') +
+      (nota ? `<p class="massa-nota">Nota ${esc(nota)}</p>` : '') +
+      (texto ? `<p class="massa-texto">${esc(texto)}</p>` : '') +
+      (botoes ? '<div class="linha-botoes"></div>' : '');
+    if (botoes) montarBotoes(cartao.querySelector('.linha-botoes'), botoes, ocultarCartaoMassa);
+    cartao.hidden = false;
+  }
+
+  function ocultarCartaoMassa() { el('cartaoMassa').hidden = true; }
+
+  function retomarMassa() {
+    if (modo === 'massa' && !camera.ciclo && !el('telaCamera').hidden) iniciarEspera();
+  }
+
+  function lerDeNovoNaMassa() {
+    camera.retirar = false;
+    retomarMassa();
+  }
+
+  function folhaSalva(codigo, nome, nota) {
+    massa.corrigidas.add(codigo);
+    atualizarFaixaMassa();
+    mostrarCartaoMassa({ classe: 'ok', titulo: '✓ Folha lida', nome, nota, texto: '✓ Salvo na planilha' });
+    mostrarEstadoCamera('Coloque a próxima folha.', 'ok');
+    retomarMassa();
+  }
+
+  /* Fora a folha salva ou já entregue, a câmera para aqui até o professor escolher o que fazer. */
+  function pedirDecisaoNaMassa(classe, titulo, nome, texto, botoes) {
+    pararEspera();
+    mostrarEstadoCamera('Esta folha precisa de você.', 'atencao');
+    mostrarCartaoMassa({ classe, titulo, nome, texto, botoes });
+  }
+
+  async function corrigirFolha(leitura) {
+    const codigo = leitura.qr;
+    camera.retirar = true;
+    camera.codigoLido = codigo;
+    const lerDeNovo = { rotulo: 'Ler de novo', acao: lerDeNovoNaMassa };
+    if (!/^\d{6}$/.test(codigo || '')) {
+      pedirDecisaoNaMassa('atencao', 'A folha foi lida, mas o QR não', '', '', [
+        { rotulo: 'Digitar o código', classe: 'primario', acao: () => { camera.leitura = leitura; abrirTelaCodigo(); } },
+        lerDeNovo
+      ]);
+      return;
+    }
+    const falhou = texto => pedirDecisaoNaMassa('falha', 'Esta folha não foi salva', '', texto, [
+      { rotulo: 'Tentar de novo', classe: 'primario', acao: () => corrigirFolha(leitura) },
+      { rotulo: 'Pular esta folha', acao: retomarMassa }
+    ]);
+    mostrarCartaoMassa({ classe: 'ok', titulo: '✓ Folha lida', texto: 'Salvando…' });
+    mostrarEstadoCamera('Salvando…');
+    try {
+      const d = JSON.parse(await pedirAoGAS('entrarNaConsulta', [estado.pub.id, codigo]));
+      if (d.status !== 'ok') { falhou(d.mensagem); return; }
+      if (d.entregue) {
+        massa.corrigidas.add(codigo);
+        atualizarFaixaMassa();
+        mostrarCartaoMassa({ classe: 'atencao', titulo: 'Esta prova já estava entregue', nome: d.nome, nota: d.resultado.nota, texto: 'Nada foi alterado.' });
+        mostrarEstadoCamera('Coloque a próxima folha.');
+        retomarMassa();
+        return;
+      }
+      aplicarLeitura(leitura, d);
+      if (estado.duvidas.size || !estado.marcadas.size) {
+        const rotulos = [...d.colunas, ...d.vf].filter(item => estado.duvidas.has(item.c)).map(item => item.r);
+        pedirDecisaoNaMassa('atencao', 'Confira esta folha', d.nome, rotulos.length ? 'Dúvida em ' + rotulos.join(', ') : 'Nenhuma marca foi lida.', [
+          { rotulo: 'Conferir na tela', classe: 'primario', acao: () => { camera.leitura = leitura; estado.dados = d; estado.codigo = codigo; abrirRespostas(); } },
+          lerDeNovo
+        ]);
+        return;
+      }
+      const r = JSON.parse(await pedirAoGAS('enviarRespostasDaConsulta', [estado.pub.id, codigo, JSON.stringify(Array.from(estado.marcadas.entries())), 'entregar']));
+      if (r.status !== 'ok') { falhou(r.mensagem); return; }
+      folhaSalva(codigo, d.nome, r.nota);
+    } catch (erro) {
+      falhou('Falha de conexão. A leitura continua guardada.');
+    }
+  }
+
+  async function iniciarMassa() {
+    const ok = await confirmar('Correção em massa', 'Cada folha lida será entregue e a nota será salva, sem a conferência do aluno. Depois disso, ele não poderá mais mudar as respostas nem pedir feedback. Use depois da prova.', 'Começar');
+    if (!ok) return;
+    modo = 'massa';
+    carregarProvas();
+  }
+
+  el('btnDigitarCodigo').addEventListener('click', () => { pararEspera(); ocultarCartaoMassa(); camera.leitura = null; abrirTelaCodigo(); });
   el('btnTrocarModo').addEventListener('click', escolherModo);
   el('btnModoManual').addEventListener('click', () => { modo = 'manual'; carregarProvas(); });
   el('btnModoCamera').addEventListener('click', () => { modo = 'camera'; carregarProvas(); });
+  el('btnModoMassa').addEventListener('click', iniciarMassa);
+  el('btnMassaDireto').addEventListener('click', () => { escolherModo(); iniciarMassa(); });
 
   function escolherModo() {
     desligarCamera();
     camera.pubId = null;
     camera.leitura = null;
     camera.retirar = false;
+    massa.corrigidas.clear();
+    esquecerLeituraDaMassa();
+    ocultarCartaoMassa();
     modo = null;
     tabletLiberado = true;
     atualizarTelaCheia();
