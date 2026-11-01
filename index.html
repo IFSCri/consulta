@@ -683,11 +683,13 @@
   }
 
   /* Bloco de início: tem formato próprio e fica acima do primeiro traço. Começar por ele impede que a
-   * leitura escorregue uma linha inteira ou pegue a coluna vizinha quando a folha ondulada desloca a tabela. */
+   * leitura escorregue uma linha inteira ou pegue a coluna vizinha quando a folha ondulada desloca a tabela.
+   * A busca vai a 14 mm na vertical: o traço é impresso junto da linha, e a tabela pode sair uma ou duas
+   * linhas de texto abaixo do que foi medido. */
   function acharBlocoInicial(img, H, x, y, bloco) {
     const c = aplicar(H, x, y), a = aplicar(H, x + 1, y), b = aplicar(H, x, y + 1);
     const ux = [a[0] - c[0], a[1] - c[1]], uy = [b[0] - c[0], b[1] - c[1]];
-    const passo = 0.25, meiaU = 24, meiaV = 32;
+    const passo = 0.25, meiaU = 24, meiaV = 56;
     const largura = meiaU * 2 + 1, altura = meiaV * 2 + 1;
     const grade = new Uint8Array(largura * altura);
     let min = 255, max = 0;
