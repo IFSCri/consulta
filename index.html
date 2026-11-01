@@ -547,33 +547,11 @@
     return { erro: 'Os 4 quadrados pretos precisam aparecer inteiros na imagem.', candidatos: pelaForma.candidatos };
   }
 
-  /* Confere se os traços laterais aparecem onde esta orientação da folha diz que deveriam estar. */
+  /* Com a orientação certa, as colunas de traços começam pelos blocos de início. */
   function notaDaOrientacao(img, H, medidas) {
-    const grupo = medidas.num || medidas.vf;
-    const passo = grupo.ys[1] - grupo.ys[0];
-    const mediaEm = (x, y) => {
-      let soma = 0;
-      for (let dy = -0.4; dy <= 0.41; dy += 0.4) {
-        for (let dx = -0.7; dx <= 0.71; dx += 0.7) {
-          const p = aplicar(H, x + dx, y + dy);
-          soma += valorEm(img, p[0], p[1]);
-        }
-      }
-      return soma / 9;
-    };
-    let melhor = 0;
-    for (let deslocamento = -2; deslocamento <= 2.01; deslocamento += 0.5) {
-      let certos = 0, total = 0;
-      [grupo.esq, grupo.dir].forEach(x => {
-        for (let r = 0; r < grupo.ys.length - 1; r += 3) {
-          const y = grupo.ys[r] + deslocamento;
-          total++;
-          if (mediaEm(x, y) < mediaEm(x, y + passo / 2) * 0.8) certos++;
-        }
-      });
-      melhor = Math.max(melhor, certos / total);
-    }
-    return melhor;
+    const inicios = [medidas.num, medidas.vf].filter(Boolean)
+      .flatMap(grupo => [grupo.esq, grupo.dir].map(x => [x, grupo.ys[0] - medidas.bloco.recuo]));
+    return inicios.filter(([x, y]) => acharBlocoInicial(img, H, x, y, medidas.bloco)).length / inicios.length;
   }
 
   function girosDoCiclo(ciclo, medidas) {
@@ -591,47 +569,56 @@
     return Math.hypot(previsto[0] - real[0], previsto[1] - real[1]) / pxQR <= 10;
   }
 
-  /* O QR decide primeiro: quando a imagem inteira não o revelou, ele ainda pode ser lido no recorte
-   * endireitado. Os traços só decidem quando não há QR legível. Devolve {H, qr} ou null. */
+  /* Com o QR lido no lugar publicado, a folha está confirmada. Senão, decidem os blocos de início, que valem
+   * mesmo com o QR fora desse lugar: o código é calculado das questões, e o mesmo código garante as mesmas
+   * linhas e colunas. Sem blocos legíveis, ainda vale o QR lido no recorte endireitado.
+   * Devolve {H, qr, nota}, sem H quando a folha não foi reconhecida. */
   function escolherOrientacao(img, ciclos, medidas, qr) {
-    for (const ciclo of ciclos.slice(0, LEITURA.CICLOS_COM_QR)) {
-      for (const H of girosDoCiclo(ciclo, medidas)) {
-        const texto = qr ? (qrNoLugar(H, qr, medidas) ? qr.texto : null) : lerQRRetificado(img, H, medidas);
-        if (texto) return { H, qr: texto };
+    const giros = ciclos.slice(0, LEITURA.CICLOS_COM_QR).flatMap(ciclo => girosDoCiclo(ciclo, medidas));
+    const confirmado = qr ? giros.find(H => qrNoLugar(H, qr, medidas)) : null;
+    if (confirmado) return { H: confirmado, qr: qr.texto, nota: 1 };
+    let melhor = { H: null, nota: 0 };
+    for (const H of giros) {
+      const nota = notaDaOrientacao(img, H, medidas);
+      if (nota > melhor.nota) melhor = { H, nota };
+      if (melhor.nota >= 0.75) break;
+    }
+    if (melhor.nota >= 0.5) {
+      const texto = qr ? qr.texto : lerQRRetificado(img, melhor.H, medidas) || lerQRRetificado(img, melhor.H, medidas, true);
+      return { H: melhor.H, qr: texto, nota: melhor.nota };
+    }
+    if (!qr) {
+      for (const H of giros) {
+        const texto = lerQRRetificado(img, H, medidas);
+        if (texto) return { H, qr: texto, nota: melhor.nota };
       }
     }
-    if (qr) return null;
-    let melhor = null;
-    for (const ciclo of ciclos) {
-      for (const H of girosDoCiclo(ciclo, medidas)) {
-        const nota = notaDaOrientacao(img, H, medidas);
-        if (!melhor || nota > melhor.nota) melhor = { H, nota };
-      }
-      if (melhor && melhor.nota >= 0.75) break;
-    }
-    return melhor && melhor.nota >= 0.35 ? { H: melhor.H, qr: null } : null;
+    return { H: null, nota: melhor.nota };
   }
 
-  /* Segunda chance para o QR: com a folha já alinhada, recorta a área dele e endireita a imagem. */
-  function lerQRRetificado(img, H, medidas) {
+  /* Segunda chance para o QR: com a folha já alinhada, recorta a área dele e endireita a imagem.
+   * Com "folhaInteira", endireita a folha toda: serve quando o QR não está no lugar publicado. */
+  function lerQRRetificado(img, H, medidas, folhaInteira) {
     if (typeof jsQR !== 'function') return null;
-    const Q = medidas.qr, margem = 6, porMm = 10;
-    const lado = (Q.lado + 2 * margem) * porMm;
-    const rgba = new Uint8ClampedArray(lado * lado * 4);
+    const Q = medidas.qr, margem = 6;
+    const area = folhaInteira ? { x: -5, y: 0, l: 220, a: 297 } : { x: Q.x - margem, y: Q.y - margem, l: Q.lado + 2 * margem, a: Q.lado + 2 * margem };
+    const porMm = folhaInteira ? 6 : 10;
+    const largura = area.l * porMm, altura = area.a * porMm;
+    const rgba = new Uint8ClampedArray(largura * altura * 4);
     const suave = (x, y) => {
       const x0 = Math.floor(x), y0 = Math.floor(y), tx = x - x0, ty = y - y0;
       return (valorEm(img, x0, y0) * (1 - tx) + valorEm(img, x0 + 1, y0) * tx) * (1 - ty) +
         (valorEm(img, x0, y0 + 1) * (1 - tx) + valorEm(img, x0 + 1, y0 + 1) * tx) * ty;
     };
-    for (let j = 0; j < lado; j++) {
-      for (let i = 0; i < lado; i++) {
-        const p = aplicar(H, Q.x - margem + i / porMm, Q.y - margem + j / porMm);
-        const v = suave(p[0], p[1]), k = (j * lado + i) * 4;
+    for (let j = 0; j < altura; j++) {
+      for (let i = 0; i < largura; i++) {
+        const p = aplicar(H, area.x + i / porMm, area.y + j / porMm);
+        const v = suave(p[0], p[1]), k = (j * largura + i) * 4;
         rgba[k] = rgba[k + 1] = rgba[k + 2] = v;
         rgba[k + 3] = 255;
       }
     }
-    const achado = jsQR(rgba, lado, lado, { inversionAttempts: 'dontInvert' });
+    const achado = jsQR(rgba, largura, altura, { inversionAttempts: 'dontInvert' });
     return achado && achado.data ? achado.data : null;
   }
 
@@ -715,12 +702,13 @@
 
   /* Bloco de início: tem formato próprio e fica acima do primeiro traço. Começar por ele impede que a
    * leitura escorregue uma linha inteira ou pegue a coluna vizinha quando a folha ondulada desloca a tabela.
-   * A busca vai a 14 mm na vertical: o traço é impresso junto da linha, e a tabela pode sair uma ou duas
-   * linhas de texto abaixo do que foi medido. */
+   * A busca é larga (16 mm para os lados, 14 mm na vertical) porque os traços são impressos junto das
+   * tabelas: é o papel que diz onde elas estão, e a publicação pode estar em outra posição. Uma célula
+   * pintada tem o tamanho do bloco, mas não tem um traço exatamente abaixo dela. */
   function acharBlocoInicial(img, H, x, y, bloco) {
     const c = aplicar(H, x, y), a = aplicar(H, x + 1, y), b = aplicar(H, x, y + 1);
     const ux = [a[0] - c[0], a[1] - c[1]], uy = [b[0] - c[0], b[1] - c[1]];
-    const passo = 0.25, meiaU = 24, meiaV = 56;
+    const passo = 0.25, meiaU = 64, meiaV = 56;
     const largura = meiaU * 2 + 1, altura = meiaV * 2 + 1;
     const grade = new Uint8Array(largura * altura);
     let min = 255, max = 0;
@@ -736,13 +724,23 @@
     if (max - min < 22) return null;
     const limiar = (min + max) / 2;
     const bin = grade.map(valor => (valor < limiar ? 1 : 0));
-    const candidatos = componentes(bin, largura, altura).filter(c2 => {
+    const tracoAbaixo = (u, v) => {
+      let escuros = 0, total = 0;
+      for (let dv = -0.4; dv <= 0.41; dv += 0.2) {
+        for (let du = -1; du <= 1.01; du += 0.25) {
+          total++;
+          if (valorEm(img, c[0] + ux[0] * (u + du) + uy[0] * (v + dv), c[1] + ux[1] * (u + du) + uy[1] * (v + dv)) < limiar) escuros++;
+        }
+      }
+      return escuros >= total * 0.6;
+    };
+    const candidatos = componentes(bin, largura, altura).map(c2 => ({ c2, u: (c2.x - meiaU) * passo, v: (c2.y - meiaV) * passo })).filter(({ c2, u, v }) => {
       const l = (c2.maxX - c2.minX + 1) * passo, h = (c2.maxY - c2.minY + 1) * passo;
-      return l >= bloco.l * 0.72 && l <= bloco.l * 1.28 && h >= bloco.a * 0.67 && h <= bloco.a * 1.33 && c2.area * passo * passo / (l * h) >= 0.7;
+      return l >= bloco.l * 0.72 && l <= bloco.l * 1.28 && h >= bloco.a * 0.67 && h <= bloco.a * 1.33 && c2.area * passo * passo / (l * h) >= 0.7 && tracoAbaixo(u, v + bloco.recuo);
     });
     if (!candidatos.length) return null;
-    const maior = candidatos.reduce((p, q) => (q.area > p.area ? q : p));
-    return { du: (maior.x - meiaU) * passo, dv: (maior.y - meiaV) * passo };
+    const maisPerto = candidatos.reduce((p, q) => (Math.hypot(q.u, q.v) < Math.hypot(p.u, p.v) ? q : p));
+    return { du: maisPerto.u, dv: maisPerto.v };
   }
 
   /* Segue os traços de cima para baixo: cada desvio parte do desvio do traço anterior.
@@ -949,7 +947,9 @@
     if (achados.erro) return Object.assign(base, { erro: achados.erro, ms: tempo() });
     if (!H) {
       const orientada = escolherOrientacao(img, achados.ciclos, medidas, qr);
-      if (!orientada) return Object.assign(base, { erro: FOLHA_NAO_CONFERE, ms: tempo() });
+      base.nota = orientada.nota;
+      base.retangulos = achados.ciclos.length;
+      if (!orientada.H) return Object.assign(base, { erro: FOLHA_NAO_CONFERE, ms: tempo() });
       H = orientada.H;
       base.qr = orientada.qr;
     }
@@ -1885,10 +1885,11 @@
     }
   }
 
+  /* Quando a folha não é reconhecida, o quadro aparece sozinho, com a imagem e os números para investigar. */
   function mostrarDiagnostico(leitura, quadro) {
-    if (!diagnosticoLigado) return;
     const campo = el('diagnostico');
-    campo.hidden = false;
+    campo.hidden = !diagnosticoLigado && leitura.erro !== FOLHA_NAO_CONFERE;
+    if (campo.hidden) return;
     const { colunas, vf, ...resumo } = leitura;
     const { num, vf: tabelaVF, qr } = estado.pub.leitura;
     const trilho = grupo => grupo && [grupo.esq, grupo.dir, grupo.ys[0], grupo.ys[grupo.ys.length - 1]];
