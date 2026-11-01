@@ -28,6 +28,9 @@
   .ok { color: #137a3f; } .erro { color: #b3261e; }
   #imagemResultado { display: block; width: 100%; height: auto; border-radius: 8px; background: #222; }
   #video { display: block; width: 100%; max-height: 60vh; background: #111; border-radius: 8px; }
+  .estado-espera { margin: 10px 0 0; padding: 12px 14px; border-radius: 10px; background: #e9eef6; color: #23405f; font-size: 18px; font-weight: 700; }
+  .estado-espera.ok { background: #d9f2e3; color: #0f6b38; }
+  .estado-espera.atencao { background: #fff3da; color: #7a5b00; }
   #relatorio { width: 100%; min-height: 150px; font: 12px/1.35 Consolas, monospace; border: 1px solid #cfdcd3; border-radius: 8px; padding: 8px; }
   #telaFolhas { display: none; background: #fff; }
   body.ver-folhas #telaLeitor { display: none; }
@@ -66,8 +69,10 @@
   <section id="painelAoVivo" class="cartao" hidden>
     <h2>Câmera ao vivo</h2>
     <video id="video" autoplay playsinline muted></video>
+    <p id="estadoEspera" class="estado-espera" hidden></p>
     <div class="acoes">
-      <button id="botaoCapturar" type="button" class="botao principal">Capturar e ler</button>
+      <button id="botaoEspera" type="button" class="botao principal">Esperar folhas automaticamente</button>
+      <button id="botaoCapturar" type="button" class="botao">Capturar e ler</button>
       <button id="botaoFecharCamera" type="button" class="botao">Fechar câmera</button>
     </div>
   </section>
@@ -1048,7 +1053,7 @@
     atualizarRelatorio();
   }
 
-  async function lerEMostrar(canvas, origem) {
+  async function lerEMostrar(canvas, origem, rolar = true) {
     elementos('painelResultado').hidden = false;
     elementos('resumo').innerHTML = '<p class="grande">Lendo…</p>';
     await new Promise(resolve => setTimeout(resolve, 30));
@@ -1064,7 +1069,7 @@
     desenharResultado(canvas, leitura, conferencia);
     mostrarResumo(leitura, conferencia, origem);
     elementos('baixarImagem').href = elementos('imagemResultado').toDataURL('image/jpeg', 0.85);
-    elementos('painelResultado').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (rolar) elementos('painelResultado').scrollIntoView({ behavior: 'smooth', block: 'start' });
     return { leitura, conferencia };
   }
 
@@ -1089,6 +1094,7 @@
   let fluxoCamera = null;
 
   function fecharCamera() {
+    pararEspera();
     if (fluxoCamera) fluxoCamera.getTracks().forEach(trilha => trilha.stop());
     fluxoCamera = null;
     elementos('painelAoVivo').hidden = true;
@@ -1099,7 +1105,7 @@
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('getUserMedia indisponível neste navegador ou nesta página');
       fluxoCamera = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } }
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 } }
       });
       const video = elementos('video');
       video.srcObject = fluxoCamera;
@@ -1114,15 +1120,150 @@
     atualizarRelatorio();
   }
 
-  function capturarDaCamera() {
+  function quadroDoVideo(ladoMaximo) {
     const video = elementos('video');
-    if (!video.videoWidth) return;
+    if (!video.videoWidth) return null;
+    const escala = Math.min(1, ladoMaximo / Math.max(video.videoWidth, video.videoHeight));
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d', { willReadFrequently: true }).drawImage(video, 0, 0);
+    canvas.width = Math.round(video.videoWidth * escala);
+    canvas.height = Math.round(video.videoHeight * escala);
+    canvas.getContext('2d', { willReadFrequently: true }).drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  function capturarDaCamera() {
+    const canvas = quadroDoVideo(ESPERA.LADO_LEITURA);
+    if (!canvas) return;
     elementos('baixarFoto').hidden = true;
     lerEMostrar(canvas, 'ao vivo');
+  }
+
+  /* ================================ ESPERA AUTOMÁTICA ================================
+   * O aparelho fica num suporte, olhando a mesa. Algumas vezes por segundo a página procura a folha numa
+   * imagem reduzida. Quando a folha fica parada, lê a imagem em tamanho maior, uma única vez, e só volta a
+   * procurar depois que a folha sair de vista. */
+  const ESPERA = {
+    LADO_VERIFICACAO: 1400,
+    LADO_LEITURA: 2600,
+    INTERVALO_MS: 300,
+    MOVIMENTO: 0.012,        /* folha "parada": moveu menos que esta fração do maior lado da imagem */
+    QUADROS_PARADOS: 2,      /* verificações seguidas na mesma posição antes de ler */
+    QUADROS_SEM_FOLHA: 3,    /* verificações sem folha para considerar que ela foi retirada */
+    PAUSA_RECUSA_MS: 700     /* espera antes de tentar de novo quando a leitura é recusada */
+  };
+  const espera = { ativa: false, tela: null, verificacoes: 0, somaMs: 0 };
+
+  function mostrarEspera(texto, classe) {
+    const campo = elementos('estadoEspera');
+    campo.hidden = false;
+    campo.className = 'estado-espera' + (classe ? ' ' + classe : '');
+    campo.textContent = texto;
+  }
+
+  function detectarFolha(canvas) {
+    const w = canvas.width, h = canvas.height;
+    const rgba = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+    const qr = acharQR(canvas);
+    const achados = acharMarcadores(criarCanal(rgba, w, h), w, h, qr);
+    const pontos = achados.pontos || (achados.ciclos && achados.ciclos[0]);
+    if (!pontos) return null;
+    const xs = pontos.map(p => p[0]), ys = pontos.map(p => p[1]);
+    return {
+      codigo: qr ? qr.texto : null,
+      x: xs.reduce((s, v) => s + v, 0) / 4, y: ys.reduce((s, v) => s + v, 0) / 4,
+      tamanho: Math.max(...xs) - Math.min(...xs) + Math.max(...ys) - Math.min(...ys),
+      lado: Math.max(w, h)
+    };
+  }
+
+  function mesmaPosicao(a, b) {
+    const limite = a.lado * ESPERA.MOVIMENTO;
+    return Math.abs(a.x - b.x) < limite && Math.abs(a.y - b.y) < limite && Math.abs(a.tamanho - b.tamanho) < limite * 2;
+  }
+
+  async function lerFolhaParada() {
+    mostrarEspera('Lendo a folha…');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const quadro = quadroDoVideo(ESPERA.LADO_LEITURA);
+    if (!quadro) return false;
+    const { leitura, conferencia } = await lerEMostrar(quadro, 'automático', false);
+    const media = Math.round(espera.somaMs / Math.max(1, espera.verificacoes));
+    historico[historico.length - 1] += ` | verificação=${media}ms`;
+    atualizarRelatorio();
+    espera.codigoLido = leitura.qr;
+    if (leitura.colunas && !leitura.recusa.length) {
+      const nota = conferencia ? `numérico ${conferencia.certasNum}/${conferencia.totalNum}, V/F ${conferencia.certasVF}/${conferencia.totalVF}` : 'leitura feita';
+      mostrarEspera(`Pronto: ${nota}. Retire a folha.`, 'ok');
+      return true;
+    }
+    if (leitura.colunas) mostrarEspera('Tire a sombra ou a mão da folha e aguarde.', 'atencao');
+    else mostrarEspera('Coloque a folha inteira na imagem, com os 4 quadrados visíveis.', 'atencao');
+    await new Promise(resolve => setTimeout(resolve, ESPERA.PAUSA_RECUSA_MS));
+    return false;
+  }
+
+  async function cicloDeEspera() {
+    let anterior = null, parados = 0, semFolha = 0, retirar = false;
+    while (espera.ativa) {
+      const inicio = performance.now();
+      const quadro = document.hidden ? null : quadroDoVideo(ESPERA.LADO_VERIFICACAO);
+      if (quadro) {
+        const folha = detectarFolha(quadro);
+        espera.verificacoes++;
+        espera.somaMs += performance.now() - inicio;
+        if (retirar) {
+          semFolha = folha ? 0 : semFolha + 1;
+          /* Outra folha colocada direto no lugar, sem a mesa ficar vazia, também libera a leitura. */
+          const trocou = folha && folha.codigo && espera.codigoLido && folha.codigo !== espera.codigoLido;
+          if (trocou || semFolha >= ESPERA.QUADROS_SEM_FOLHA) { retirar = false; anterior = null; parados = 0; mostrarEspera('Aguardando a próxima folha…'); }
+        } else if (!folha) {
+          anterior = null;
+          parados = 0;
+          mostrarEspera('Aguardando a folha…');
+        } else {
+          parados = anterior && mesmaPosicao(anterior, folha) ? parados + 1 : 0;
+          anterior = folha;
+          if (parados >= ESPERA.QUADROS_PARADOS) {
+            retirar = await lerFolhaParada();
+            semFolha = 0;
+            parados = 0;
+          } else {
+            mostrarEspera('Folha encontrada: mantenha parada…');
+          }
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, Math.max(60, ESPERA.INTERVALO_MS - (performance.now() - inicio))));
+    }
+  }
+
+  /* Pede ao aparelho para não apagar a tela. Se não houver suporte, a espera funciona do mesmo jeito. */
+  async function manterTelaLigada() {
+    try {
+      if (navigator.wakeLock) espera.tela = await navigator.wakeLock.request('screen');
+    } catch (erro) {
+      console.warn('Tela ligada indisponível:', erro);
+    }
+  }
+
+  async function iniciarEspera() {
+    if (espera.ativa) return;
+    espera.ativa = true;
+    espera.verificacoes = 0;
+    espera.somaMs = 0;
+    elementos('botaoEspera').textContent = 'Parar a espera';
+    mostrarEspera('Aguardando a folha…');
+    await manterTelaLigada();
+    ambiente.push(`Espera automática: tela ligada ${espera.tela ? 'garantida' : 'não garantida'}`);
+    atualizarRelatorio();
+    cicloDeEspera();
+  }
+
+  function pararEspera() {
+    espera.ativa = false;
+    if (espera.tela) espera.tela.release().catch(() => {});
+    espera.tela = null;
+    elementos('botaoEspera').textContent = 'Esperar folhas automaticamente';
+    elementos('estadoEspera').hidden = true;
   }
 
   async function copiarRelatorio() {
@@ -1146,6 +1287,8 @@
     elementos('entradaGaleria').addEventListener('change', evento => { lerArquivo(evento.target.files[0], 'galeria'); evento.target.value = ''; });
     elementos('botaoAoVivo').addEventListener('click', abrirCamera);
     elementos('botaoCapturar').addEventListener('click', capturarDaCamera);
+    elementos('botaoEspera').addEventListener('click', () => { if (espera.ativa) pararEspera(); else iniciarEspera(); });
+    document.addEventListener('visibilitychange', () => { if (espera.ativa && document.visibilityState === 'visible') manterTelaLigada(); });
     elementos('botaoFecharCamera').addEventListener('click', fecharCamera);
     elementos('botaoCopiar').addEventListener('click', copiarRelatorio);
     elementos('botaoFolhas').addEventListener('click', () => { montarFolhas(); window.print(); });
