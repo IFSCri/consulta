@@ -111,9 +111,27 @@
   .tabela-vf td.celula { min-width: 80px; }
   .linha-nda td.celula { font-size: .9rem; }
 
-  .resultado { margin: 16px 0 0; padding: 0; font-weight: 700; color: var(--texto); min-height: 24px; }
+  .resultado { margin: 16px 0 0; padding: 0; font-weight: 700; color: var(--texto); min-height: 24px; scroll-margin-top: 90px; }
   .resultado.erro-msg { color: #9a2f2f; }
   .resultado.ok-msg { padding: 12px 16px; border-radius: 12px; background: #e9f7ee; border: 1px solid #b9e2c7; }
+
+  /* Resumo do feedback: um bloco para o gabarito numérico e outro para o V/F */
+  .feedback { display: grid; gap: 12px; padding: 14px; border-radius: 14px; background: #eef7f1; border: 1px solid #b9e2c7; font-weight: 400; }
+  .feedback-topo { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; color: var(--verde); font-size: 1.15rem; font-weight: 800; }
+  .feedback-restam { padding: 4px 12px; border-radius: 999px; background: #fff; border: 1px solid #b9e2c7; font-size: .95rem; }
+  .blocos-feedback { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+  .bloco-feedback { padding: 14px; border-radius: 12px; background: #fff; border: 1px solid var(--borda); border-top: 5px solid var(--verde-2); }
+  .bloco-feedback.vf { border-top-color: #3b6fb5; }
+  .bloco-feedback h3 { margin: 0 0 10px; font-size: 1.05rem; }
+  .contagens { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .contagem { display: grid; justify-items: center; padding: 8px 4px; border-radius: 10px; font-size: .86rem; font-weight: 700; text-align: center; line-height: 1.2; }
+  .contagem strong { font-size: 1.7rem; line-height: 1.1; }
+  .contagem.certo { background: var(--certo); color: var(--certo-txt); }
+  .contagem.errado { background: var(--errado); color: var(--errado-txt); }
+  .contagem.branco { background: #e6ebef; color: #46565f; }
+  .legenda-feedback { margin: 10px 0 0; color: var(--texto-2); font-size: .92rem; }
+  .sem-marcacao { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 0; font-size: .92rem; font-weight: 700; }
+  .rotulo-quesito { padding: 2px 8px; border-radius: 8px; background: #fff3da; border: 1px solid #f2b35a; color: #7a4a00; }
 
   .barra-acoes {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
@@ -264,7 +282,7 @@
       <p id="avisoLeitura" class="aviso-leitura" hidden></p>
       <p class="instrucao">Toque nas células para marcar <strong>exatamente o que você respondeu na folha</strong>. Toque de novo para desmarcar.</p>
       <div id="tabelas" class="tabelas"></div>
-      <p id="resultado" class="resultado" aria-live="polite"></p>
+      <div id="resultado" class="resultado" aria-live="polite"></div>
     </section>
   </main>
 
@@ -1414,6 +1432,40 @@
     area.className = 'resultado' + (tipo === 'erro' ? ' erro-msg' : tipo === 'ok' && texto ? ' ok-msg' : '');
   }
 
+  /* porChave do feedback só traz os quesitos numéricos: o V/F vem apenas em contagem (r.vf). */
+  function mostrarFeedback(r, restantes) {
+    const d = estado.dados;
+    const contagem = (valor, singular, plural, classe) =>
+      `<li class="contagem ${classe}"><strong>${valor}</strong>${valor === 1 ? singular : plural}</li>`;
+    const bloco = (classe, titulo, contagens, legenda, rotuloDaLista, itens) => {
+      const faltando = itens.filter(item => !estado.marcadas.has(item.c)).map(item => `<span class="rotulo-quesito">${esc(item.r)}</span>`);
+      return `<section class="bloco-feedback ${classe}"><h3>${titulo}</h3><ul class="contagens">${contagens}</ul>` +
+        `<p class="legenda-feedback">${legenda}</p>` +
+        (faltando.length ? `<p class="sem-marcacao"><span>${rotuloDaLista}</span>${faltando.join('')}</p>` : '') + '</section>';
+    };
+    const blocos = [];
+    if (d.colunas.length) {
+      const respostas = Object.values(r.porChave);
+      const corretas = respostas.filter(Boolean).length;
+      const semMarcacao = d.colunas.filter(item => !estado.marcadas.has(item.c)).length;
+      blocos.push(bloco('', 'Gabarito numérico',
+        contagem(corretas, 'correta', 'corretas', 'certo') + contagem(respostas.length - corretas, 'incorreta', 'incorretas', 'errado') +
+        contagem(semMarcacao, 'sem marcação', 'sem marcação', 'branco'),
+        'Na tabela: verde = correta, vermelho = incorreta.', 'Não pontuam:', d.colunas));
+    }
+    if (r.temVF) {
+      blocos.push(bloco('vf', 'Verdadeiro ou falso',
+        contagem(r.vf.acertos, 'acerto', 'acertos', 'certo') + contagem(r.vf.erros, 'erro', 'erros', 'errado') +
+        contagem(r.vf.emBranco, 'em branco', 'em branco', 'branco'),
+        'Em branco não conta. Cada erro cancela um acerto.', 'Em branco:', d.vf));
+    }
+    const area = el('resultado');
+    area.className = 'resultado';
+    area.innerHTML = '<div class="feedback"><div class="feedback-topo"><span>Feedback registrado</span>' +
+      `<span class="feedback-restam">${restantes === 1 ? 'Resta 1 feedback' : `Restam ${restantes} feedbacks`}</span></div>` +
+      `<div class="blocos-feedback">${blocos.join('')}</div></div>`;
+  }
+
   el('tabelas').addEventListener('click', evento => {
     const celula = evento.target.closest('td.celula');
     const d = estado.dados;
@@ -1500,14 +1552,8 @@
       estado.resultado = { porChave: r.porChave || {} };
       if (acao === 'feedback') {
         d.feedbacksUsados = r.feedbacksUsados;
-        const restantes = Math.max(0, r.feedbacksPermitidos - r.feedbacksUsados);
-        const resumoVF = r.temVF
-          ? ` V/F: ${r.vf.acertos} acerto(s), ${r.vf.erros} erro(s); ${r.vf.emBranco} em branco não foi/foram contabilizado(s).`
-          : '';
-        const faltando = quesitosSemMarcacao();
-        const avisoFaltando = faltando.length ? ` Sem marcação (não pontuam): ${faltando.join(', ')}.` : '';
-        mostrarResultado(`Feedback registrado. Verde = correta, vermelho = incorreta (valores numéricos).${resumoVF}${avisoFaltando} Restam ${restantes} feedback(s).`, 'ok');
-        setTimeout(() => el('resultado').scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+        mostrarFeedback(r, Math.max(0, r.feedbacksPermitidos - r.feedbacksUsados));
+        setTimeout(() => el('resultado').scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
       } else {
         d.entregue = true;
         estado.nota = r.nota;
