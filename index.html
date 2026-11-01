@@ -1,1 +1,1161 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Teste de leitura do gabarito</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: #f3f6f4; color: #1d3a27; font: 16px/1.45 Arial, Helvetica, sans-serif; }
+  #telaLeitor { max-width: 900px; margin: 0 auto; padding: 16px; }
+  h1 { margin: 4px 0 2px; font-size: 22px; color: #17482d; }
+  .sub { margin: 0 0 14px; color: #55705f; font-size: 14px; }
+  .acoes { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+  .botao {
+    display: inline-flex; align-items: center; justify-content: center; min-height: 52px; padding: 0 18px;
+    border: 1px solid #b9d5c1; border-radius: 12px; background: #fff; color: #17482d;
+    font: 700 16px Arial, sans-serif; cursor: pointer;
+  }
+  .botao.principal { background: #178448; border-color: #178448; color: #fff; }
+  .botao.pequeno { min-height: 40px; font-size: 14px; padding: 0 12px; }
+  .cartao { margin: 12px 0; padding: 14px; background: #fff; border: 1px solid #dfe9e2; border-radius: 12px; }
+  .cartao h2 { margin: 0 0 8px; font-size: 16px; }
+  #resumo { font-size: 15px; }
+  #resumo .grande { font-size: 22px; font-weight: 700; }
+  .ok { color: #137a3f; } .erro { color: #b3261e; }
+  #imagemResultado { display: block; width: 100%; height: auto; border-radius: 8px; background: #222; }
+  #video { display: block; width: 100%; max-height: 60vh; background: #111; border-radius: 8px; }
+  #relatorio { width: 100%; min-height: 150px; font: 12px/1.35 Consolas, monospace; border: 1px solid #cfdcd3; border-radius: 8px; padding: 8px; }
+  #telaFolhas { display: none; background: #fff; }
+  body.ver-folhas #telaLeitor { display: none; }
+  body.ver-folhas #telaFolhas { display: block; }
+  .folha { width: 210mm; height: 297mm; overflow: hidden; break-after: page; page-break-after: always; background: #fff; }
+  .folha:last-child { break-after: auto; page-break-after: auto; }
+  .folha svg { display: block; }
+  @page { size: A4 portrait; margin: 0; }
+  @media print {
+    body { background: #fff; }
+    #telaLeitor { display: none !important; }
+    #telaFolhas { display: block !important; }
+  }
+</style>
+</head>
+<body>
+<main id="telaLeitor">
+  <h1>Teste de leitura do gabarito</h1>
+  <p class="sub">A foto é analisada aqui no aparelho e não é enviada para lugar nenhum.</p>
+  <p id="estadoBibliotecas" class="sub"></p>
 
+  <div class="acoes">
+    <label class="botao principal">Tirar foto da folha
+      <input id="entradaFoto" type="file" accept="image/*" capture="environment" hidden>
+    </label>
+    <label class="botao">Escolher da galeria
+      <input id="entradaGaleria" type="file" accept="image/*" hidden>
+    </label>
+    <button id="botaoAoVivo" type="button" class="botao">Testar câmera ao vivo</button>
+    <button id="botaoFolhas" type="button" class="botao">Imprimir folhas de teste</button>
+  </div>
+  <p class="sub"><label>Se o QR não for lido, comparar com a
+    <select id="folhaManual"><option value="">folha do QR</option><option value="1">folha 1</option><option value="2">folha 2</option><option value="3">folha 3</option></select>
+  </label></p>
+
+  <section id="painelAoVivo" class="cartao" hidden>
+    <h2>Câmera ao vivo</h2>
+    <video id="video" autoplay playsinline muted></video>
+    <div class="acoes">
+      <button id="botaoCapturar" type="button" class="botao principal">Capturar e ler</button>
+      <button id="botaoFecharCamera" type="button" class="botao">Fechar câmera</button>
+    </div>
+  </section>
+
+  <section id="painelResultado" class="cartao" hidden>
+    <h2>Resultado</h2>
+    <div id="resumo"></div>
+    <div class="acoes">
+      <a id="baixarImagem" class="botao pequeno" download="leitura-resultado.jpg">Baixar imagem do resultado</a>
+      <a id="baixarFoto" class="botao pequeno" download="leitura-foto-original.jpg" hidden>Baixar foto original</a>
+    </div>
+    <canvas id="imagemResultado"></canvas>
+    <p class="sub">Verde: leitura certa. Vermelho: leitura errada ou marca não encontrada. Amarelo: dúvida. Pontos azuis: marcas de alinhamento encontradas.</p>
+  </section>
+
+  <section class="cartao">
+    <h2>Relatório do teste</h2>
+    <textarea id="relatorio" readonly></textarea>
+    <div class="acoes"><button id="botaoCopiar" type="button" class="botao pequeno">Copiar relatório</button></div>
+  </section>
+</main>
+<div id="telaFolhas"></div>
+
+<script>
+  /* ========================== GEOMETRIA DA FOLHA (em mm, A4 em pé) ==========================
+   * As medidas das células repetem as do gabarito real: 54 linhas de 3,9 mm por colunas de 5,6 mm,
+   * linha N.D.A. de 13,2 mm e V/F de cerca de 3,65 mm em três colunas.
+   * - Marcadores: quadrados pretos nos cantos, usados para corrigir a inclinação da foto.
+   * - Traços: uma marca por linha nos dois lados de cada tabela. A leitura segue esses traços de
+   *   cima para baixo e assim acompanha a folha mesmo quando ela está ondulada. */
+  const FOLHA = {
+    MARCADOR: { LADO: 7, CENTROS: [[13, 13], [197, 13], [13, 284], [197, 284]] },
+    QR: { X: 176, Y: 246, LADO: 16 },
+    TRACO: { LARG: 3, ALT: 1.6 },
+    BLOCO: { LARG: 5, ALT: 3, RECUO: 6.45 },   /* acima do primeiro traço de cada coluna de traços */
+    NUM: { X: 100, Y: 44, ROTULO: 18.7, LARG: 5.6, ALT: 3.9, LINHAS: 54, COLS: 8, ALT_NDA: 13.2, TRACO_ESQ: 96.5, TRACO_DIR: 167 },
+    VF: { X: 22, Y: 205, ROTULO: 7, LARG: 5.5, ALT: 3.65, LINHAS: 12, GRUPOS: 3, VAO: 5, TRACO_ESQ: 18.5, TRACO_DIR: 89.5 }
+  };
+  const LETRAS = 'ABCDEFGH';
+
+  /* Limites da decisão. Serão recalibrados com as fotos reais do tablet. */
+  const LEITURA = {
+    TINTA: 0.20,     /* o ponto conta como tinta se for 20% mais escuro que o papel ao redor */
+    MARCA: 0.12,     /* fração mínima de tinta para a célula contar como marcada */
+    DUVIDA: 0.06,    /* entre este valor e MARCA, a célula fica em dúvida */
+    SEGUNDA: 0.30,   /* a 2ª marca da coluna só conta se tiver 30% da tinta da 1ª */
+    BORRAO: 0.35,    /* parte da tinta da vizinha mais pintada que é descontada de cada célula */
+    GANHO: 2,        /* peso do escurecimento médio da célula, que revela o traço claro de lápis */
+    SUAVE_MM: 0.25,  /* raio da suavização da imagem antes da leitura das células */
+    NDA: 0.05,       /* tinta mínima na célula N.D.A. */
+    MIN_PX_MM: 3.2   /* abaixo disto a folha está pequena demais na foto para uma leitura segura */
+  };
+
+  const FOLHAS = [
+    { numero: 1, titulo: 'Folha 1: pinte o quadrado inteiro com caneta azul', marca: 'pintar' },
+    { numero: 2, titulo: 'Folha 2: pinte com caneta preta e siga os casos especiais', marca: 'pintar' },
+    { numero: 3, titulo: 'Folha 3: marque com um X (como é hoje)', marca: 'x' }
+  ];
+
+  function codigoDaFolha(numero) { return '77000' + numero; }
+
+  function celulaNumerica(coluna, linha) {
+    const N = FOLHA.NUM;
+    return { x: N.X + N.ROTULO + N.LARG * (coluna + 0.5), y: N.Y + N.ALT * (linha + 0.5), l: N.LARG, a: N.ALT };
+  }
+  function celulaNDA(coluna) {
+    const N = FOLHA.NUM;
+    return { x: N.X + N.ROTULO + N.LARG * (coluna + 0.5), y: N.Y + N.ALT * N.LINHAS + N.ALT_NDA / 2, l: N.LARG, a: N.ALT_NDA };
+  }
+  function grupoVFx(grupo) {
+    const V = FOLHA.VF;
+    return V.X + grupo * (V.ROTULO + 2 * V.LARG + V.VAO);
+  }
+  function celulaVF(item, lado) {
+    const V = FOLHA.VF;
+    const grupo = Math.floor(item / V.LINHAS), linha = item % V.LINHAS;
+    return { x: grupoVFx(grupo) + V.ROTULO + V.LARG * (lado + 0.5), y: V.Y + V.ALT * (linha + 0.5), l: V.LARG, a: V.ALT };
+  }
+
+  function sorteador(semente) {
+    let s = semente >>> 0;
+    return () => {
+      s = (s + 0x6D2B79F5) >>> 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /* Respostas que cada folha pede. O leitor recalcula a mesma lista a partir do número da folha. */
+  function gabaritoDaFolha(numero) {
+    const sorteio = sorteador(numero * 7919);
+    const N = FOLHA.NUM, V = FOLHA.VF;
+    const numericas = Array.from({ length: N.COLS }, () => ({ tipo: 'uma', linhas: [Math.floor(sorteio() * N.LINHAS)] }));
+    const vf = Array.from({ length: V.LINHAS * V.GRUPOS }, () => {
+      const r = sorteio();
+      return r < 0.12 ? '' : r < 0.56 ? 'V' : 'F';
+    });
+    if (numero === 2) {
+      const outra = (numericas[2].linhas[0] + 23) % N.LINHAS;
+      numericas[2] = { tipo: 'dupla', linhas: [numericas[2].linhas[0], outra].sort((a, b) => a - b) };
+      numericas[4] = { tipo: 'branco', linhas: [] };
+      numericas[6] = { tipo: 'nda', linhas: [] };
+      vf[5] = 'VF';
+    }
+    return { numericas, vf };
+  }
+
+  /* ================================== DESENHO DA FOLHA ================================== */
+  const SVG_NS = 'http:' + '/' + '/www.w3.org/2000/svg';
+
+  function esc(texto) {
+    return String(texto).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function folhaSVG(numero, extras) {
+    const info = FOLHAS[numero - 1];
+    const gab = gabaritoDaFolha(numero);
+    const N = FOLHA.NUM, V = FOLHA.VF, T = FOLHA.TRACO;
+    const p = [];
+    const ret = (x, y, l, a, atr) => p.push(`<rect x="${x}" y="${y}" width="${l}" height="${a}" ${atr || 'fill="#000"'}/>`);
+    const borda = (x, y, l, a) => ret(x, y, l, a, 'fill="none" stroke="#000" stroke-width="0.26"');
+    const txt = (x, y, tam, texto, atr) => p.push(`<text x="${x}" y="${y}" font-size="${tam}" font-family="Arial, sans-serif" ${atr || ''}>${esc(texto)}</text>`);
+
+    ret(0, 0, 210, 297, 'fill="#fff"');
+    FOLHA.MARCADOR.CENTROS.forEach(([x, y]) => ret(x - FOLHA.MARCADOR.LADO / 2, y - FOLHA.MARCADOR.LADO / 2, FOLHA.MARCADOR.LADO, FOLHA.MARCADOR.LADO));
+
+    txt(24, 17, 5, 'Teste de leitura do gabarito', 'font-weight="700"');
+    txt(24, 23.5, 3.6, info.titulo, 'font-weight="700"');
+    txt(24, 29, 3, 'Fotografe a folha inteira: os 4 quadrados pretos devem aparecer na foto.');
+
+    /* Lista do que marcar */
+    let y = 40;
+    txt(24, y, 3.4, 'Numérico: marque a linha indicada', 'font-weight="700"');
+    y += 5.5;
+    gab.numericas.forEach((item, coluna) => {
+      const texto = item.tipo === 'uma' ? `Coluna ${LETRAS[coluna]}: linha ${item.linhas[0] + 1}`
+        : item.tipo === 'dupla' ? `Coluna ${LETRAS[coluna]}: marque as linhas ${item.linhas[0] + 1} e ${item.linhas[1] + 1}`
+        : item.tipo === 'branco' ? `Coluna ${LETRAS[coluna]}: deixe em branco`
+        : `Coluna ${LETRAS[coluna]}: escreva 12,5 na célula N.D.A.`;
+      txt(24, y, 3.2, texto);
+      y += 5;
+    });
+    y += 5;
+    txt(24, y, 3.4, 'V ou F: número e marca (– = em branco)', 'font-weight="700"');
+    y += 5.5;
+    for (let i = 0; i < gab.vf.length; i += 6) {
+      const trecho = gab.vf.slice(i, i + 6).map((valor, j) => `${i + j + 1}: ${valor === '' ? '–' : valor === 'VF' ? 'V e F' : valor}`).join('     ');
+      txt(24, y, 3.2, trecho);
+      y += 5;
+    }
+
+    /* Tabela numérica */
+    txt(N.X, N.Y - 2, 2.6, 'Linha');
+    for (let c = 0; c < N.COLS; c++) {
+      const x = N.X + N.ROTULO + N.LARG * c;
+      borda(x, N.Y - 6, N.LARG, 6);
+      txt(x + 1.7, N.Y - 1.8, 3.2, LETRAS[c], 'font-weight="700"');
+    }
+    borda(N.X, N.Y - 6, N.ROTULO, 6);
+    for (let r = 0; r < N.LINHAS; r++) {
+      const yr = N.Y + N.ALT * r;
+      borda(N.X, yr, N.ROTULO, N.ALT);
+      txt(N.X + 7, yr + 2.9, 2.8, r + 1, 'font-weight="700"');
+      for (let c = 0; c < N.COLS; c++) borda(N.X + N.ROTULO + N.LARG * c, yr, N.LARG, N.ALT);
+      ret(N.TRACO_ESQ - T.LARG / 2, yr + N.ALT / 2 - T.ALT / 2, T.LARG, T.ALT);
+      ret(N.TRACO_DIR - T.LARG / 2, yr + N.ALT / 2 - T.ALT / 2, T.LARG, T.ALT);
+    }
+    const yNDA = N.Y + N.ALT * N.LINHAS;
+    borda(N.X, yNDA, N.ROTULO, N.ALT_NDA);
+    txt(N.X + 3.5, yNDA + 6, 3, 'N.D.A.', 'font-weight="700"');
+    txt(N.X + 1.5, yNDA + 9.5, 2.2, '(coloque o valor)');
+    for (let c = 0; c < N.COLS; c++) borda(N.X + N.ROTULO + N.LARG * c, yNDA, N.LARG, N.ALT_NDA);
+    ret(N.TRACO_ESQ - T.LARG / 2, yNDA + N.ALT_NDA / 2 - T.ALT / 2, T.LARG, T.ALT);
+    ret(N.TRACO_DIR - T.LARG / 2, yNDA + N.ALT_NDA / 2 - T.ALT / 2, T.LARG, T.ALT);
+
+    /* Tabela V/F */
+    for (let g = 0; g < V.GRUPOS; g++) {
+      const x = grupoVFx(g);
+      txt(x + V.ROTULO + 1.8, V.Y - 1.2, 3, 'V', 'font-weight="700"');
+      txt(x + V.ROTULO + V.LARG + 1.8, V.Y - 1.2, 3, 'F', 'font-weight="700"');
+      for (let r = 0; r < V.LINHAS; r++) {
+        const yr = V.Y + V.ALT * r;
+        borda(x, yr, V.ROTULO, V.ALT);
+        borda(x + V.ROTULO, yr, V.LARG, V.ALT);
+        borda(x + V.ROTULO + V.LARG, yr, V.LARG, V.ALT);
+        txt(x + 1.2, yr + 2.8, 2.8, g * V.LINHAS + r + 1, 'font-weight="700"');
+      }
+    }
+    for (let r = 0; r < V.LINHAS; r++) {
+      const yr = V.Y + V.ALT * r;
+      ret(V.TRACO_ESQ - T.LARG / 2, yr + V.ALT / 2 - T.ALT / 2, T.LARG, T.ALT);
+      ret(V.TRACO_DIR - T.LARG / 2, yr + V.ALT / 2 - T.ALT / 2, T.LARG, T.ALT);
+    }
+
+    /* Blocos de início das colunas de traços */
+    const B = FOLHA.BLOCO;
+    [[N.TRACO_ESQ, N.Y + N.ALT / 2], [N.TRACO_DIR, N.Y + N.ALT / 2], [V.TRACO_ESQ, V.Y + V.ALT / 2], [V.TRACO_DIR, V.Y + V.ALT / 2]]
+      .forEach(([x, yPrimeiro]) => ret(x - B.LARG / 2, yPrimeiro - B.RECUO - B.ALT / 2, B.LARG, B.ALT));
+
+    /* QR Code com o código da folha */
+    const Q = FOLHA.QR;
+    const qr = qrcode(1, 'M');
+    qr.addData(codigoDaFolha(numero));
+    qr.make();
+    const modulos = qr.getModuleCount();
+    const m = Q.LADO / modulos;
+    let caminho = '';
+    for (let l = 0; l < modulos; l++) {
+      for (let c = 0; c < modulos; c++) {
+        if (qr.isDark(l, c)) caminho += `M${(Q.X + c * m).toFixed(3)} ${(Q.Y + l * m).toFixed(3)}h${m.toFixed(3)}v${m.toFixed(3)}h-${m.toFixed(3)}z`;
+      }
+    }
+    p.push(`<path d="${caminho}" fill="#000" shape-rendering="crispEdges"/>`);
+    txt(Q.X + 2, Q.Y + Q.LADO + 4.5, 3, 'CÓDIGO ' + codigoDaFolha(numero), 'font-weight="700"');
+
+    return `<svg xmlns="${SVG_NS}" viewBox="0 0 210 297" width="210mm" height="297mm">${p.join('')}${extras || ''}</svg>`;
+  }
+
+  function montarFolhas() {
+    document.getElementById('telaFolhas').innerHTML = FOLHAS.map(info => `<div class="folha">${folhaSVG(info.numero)}</div>`).join('');
+  }
+
+  /* ================================== LEITURA DA IMAGEM ================================== */
+  function criarCanal(rgba, w, h) {
+    /* Brilho da imagem: caneta de qualquer cor escurece, e um tom de luz ou de tela pesa pouco. */
+    const canal = new Uint8Array(w * h);
+    for (let i = 0, j = 0; i < canal.length; i++, j += 4) {
+      canal[i] = rgba[j] * 0.3 + rgba[j + 1] * 0.59 + rgba[j + 2] * 0.11;
+    }
+    return canal;
+  }
+
+  /* Média em uma janela pequena: apaga linhas finas e granulado sem apagar traços de caneta. */
+  function suavizar(canal, w, h, raio) {
+    const lado = 2 * raio + 1;
+    const meio = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const base = y * w;
+      let soma = canal[base] * (raio + 1);
+      for (let d = 1; d <= raio; d++) soma += canal[base + Math.min(d, w - 1)];
+      for (let x = 0; x < w; x++) {
+        meio[base + x] = soma / lado;
+        soma += canal[base + Math.min(x + raio + 1, w - 1)] - canal[base + Math.max(x - raio, 0)];
+      }
+    }
+    const saida = new Uint8Array(w * h);
+    for (let x = 0; x < w; x++) {
+      let soma = meio[x] * (raio + 1);
+      for (let d = 1; d <= raio; d++) soma += meio[Math.min(d, h - 1) * w + x];
+      for (let y = 0; y < h; y++) {
+        saida[y * w + x] = soma / lado;
+        soma += meio[Math.min(y + raio + 1, h - 1) * w + x] - meio[Math.max(y - raio, 0) * w + x];
+      }
+    }
+    return saida;
+  }
+
+  function reduzir(canal, w, h, fator) {
+    const rw = Math.floor(w / fator), rh = Math.floor(h / fator);
+    const saida = new Uint8Array(rw * rh);
+    const area = fator * fator;
+    for (let y = 0; y < rh; y++) {
+      for (let x = 0; x < rw; x++) {
+        let soma = 0;
+        for (let j = 0; j < fator; j++) {
+          const base = (y * fator + j) * w + x * fator;
+          for (let i = 0; i < fator; i++) soma += canal[base + i];
+        }
+        saida[y * rw + x] = soma / area;
+      }
+    }
+    return { dados: saida, w: rw, h: rh };
+  }
+
+  function acharQR(canvas) {
+    if (typeof jsQR !== 'function') return null;
+    const maior = Math.max(canvas.width, canvas.height);
+    const escalas = maior > 1500 ? [1400 / maior, Math.min(1, 2200 / maior)] : [1];
+    for (const escala of escalas) {
+      const w = Math.round(canvas.width * escala), h = Math.round(canvas.height * escala);
+      const copia = document.createElement('canvas');
+      copia.width = w; copia.height = h;
+      const ctx = copia.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(canvas, 0, 0, w, h);
+      const achado = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+      if (achado && achado.data) {
+        const c = achado.location;
+        const voltar = ponto => [ponto.x / escala, ponto.y / escala];
+        return { texto: achado.data, tl: voltar(c.topLeftCorner), tr: voltar(c.topRightCorner), bl: voltar(c.bottomLeftCorner), br: voltar(c.bottomRightCorner) };
+      }
+    }
+    return null;
+  }
+
+  function binarizar(img, janela, fator) {
+    const { dados, w, h } = img;
+    const integral = new Uint32Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) {
+      let linha = 0;
+      for (let x = 0; x < w; x++) {
+        linha += dados[y * w + x];
+        integral[(y + 1) * (w + 1) + x + 1] = integral[y * (w + 1) + x + 1] + linha;
+      }
+    }
+    const bin = new Uint8Array(w * h);
+    const meia = Math.max(3, Math.floor(janela / 2));
+    for (let y = 0; y < h; y++) {
+      const y0 = Math.max(0, y - meia), y1 = Math.min(h, y + meia + 1);
+      for (let x = 0; x < w; x++) {
+        const x0 = Math.max(0, x - meia), x1 = Math.min(w, x + meia + 1);
+        const soma = integral[y1 * (w + 1) + x1] - integral[y0 * (w + 1) + x1] - integral[y1 * (w + 1) + x0] + integral[y0 * (w + 1) + x0];
+        if (dados[y * w + x] < soma / ((x1 - x0) * (y1 - y0)) * fator) bin[y * w + x] = 1;
+      }
+    }
+    return bin;
+  }
+
+  function componentes(bin, w, h) {
+    const visitado = new Uint8Array(w * h);
+    const pilha = new Int32Array(w * h);
+    const blocos = [];
+    for (let inicio = 0; inicio < bin.length; inicio++) {
+      if (!bin[inicio] || visitado[inicio]) continue;
+      let topo = 0, area = 0, somaX = 0, somaY = 0;
+      let minX = w, maxX = 0, minY = h, maxY = 0;
+      pilha[topo++] = inicio;
+      visitado[inicio] = 1;
+      while (topo) {
+        const i = pilha[--topo];
+        const x = i % w, y = (i - x) / w;
+        area++; somaX += x; somaY += y;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        if (x > 0 && bin[i - 1] && !visitado[i - 1]) { visitado[i - 1] = 1; pilha[topo++] = i - 1; }
+        if (x < w - 1 && bin[i + 1] && !visitado[i + 1]) { visitado[i + 1] = 1; pilha[topo++] = i + 1; }
+        if (y > 0 && bin[i - w] && !visitado[i - w]) { visitado[i - w] = 1; pilha[topo++] = i - w; }
+        if (y < h - 1 && bin[i + w] && !visitado[i + w]) { visitado[i + w] = 1; pilha[topo++] = i + w; }
+      }
+      if (area >= 16) blocos.push({ area, x: somaX / area, y: somaY / area, minX, maxX, minY, maxY });
+    }
+    return blocos;
+  }
+
+  function quadradoNaImagem(img, b) {
+    const l = b.maxX - b.minX + 1, a = b.maxY - b.minY + 1;
+    const naBorda = b.minX === 0 || b.minY === 0 || b.maxX === img.w - 1 || b.maxY === img.h - 1;
+    return !naBorda && l / a > 0.6 && l / a < 1.66 && b.area / (l * a) > 0.65;
+  }
+
+  /* Com o QR lido, sua posição dá a escala e a orientação da folha. */
+  function marcadoresPeloQR(img, qr, fator) {
+    const ladoEsperado = Math.hypot(qr.tr[0] - qr.tl[0], qr.tr[1] - qr.tl[1]) / fator / FOLHA.QR.LADO * FOLHA.MARCADOR.LADO;
+    const area0 = ladoEsperado * ladoEsperado;
+    const candidatos = componentes(binarizar(img, ladoEsperado * 3.2, 0.72), img.w, img.h)
+      .filter(b => quadradoNaImagem(img, b) && b.area > area0 * 0.3 && b.area < area0 * 2.8);
+    if (candidatos.length < 4) return null;
+    const ex = [qr.tr[0] - qr.tl[0], qr.tr[1] - qr.tl[1]], ey = [qr.bl[0] - qr.tl[0], qr.bl[1] - qr.tl[1]];
+    const nx = Math.hypot(ex[0], ex[1]), ny = Math.hypot(ey[0], ey[1]);
+    const noEixo = b => [(b.x * ex[0] + b.y * ex[1]) / nx, (b.x * ey[0] + b.y * ey[1]) / ny];
+    const melhor = pontuacao => candidatos.reduce((a, b) => (pontuacao(noEixo(b)) > pontuacao(noEixo(a)) ? b : a));
+    const cantos = [melhor(p => -p[0] - p[1]), melhor(p => p[0] - p[1]), melhor(p => -p[0] + p[1]), melhor(p => p[0] + p[1])];
+    return new Set(cantos).size === 4 ? cantos : null;
+  }
+
+  /* Sem o QR: procura, em qualquer tamanho, quatro quadrados que formem o retângulo dos marcadores. */
+  function marcadoresPelaForma(img) {
+    const maior = Math.max(img.w, img.h);
+    const quadrados = [];
+    [maior / 40, maior / 20, maior / 10].forEach(janela => {
+      componentes(binarizar(img, janela, 0.72), img.w, img.h).forEach(b => {
+        const repetido = quadrados.some(q => Math.hypot(q.x - b.x, q.y - b.y) < Math.sqrt(q.area) / 2);
+        if (!repetido && quadradoNaImagem(img, b) && b.area >= 25 && Math.sqrt(b.area) < maior / 8) quadrados.push(b);
+      });
+    });
+    const lista = quadrados.sort((a, b) => b.area - a.area).slice(0, 14);
+    const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    const quadros = [];
+    for (let a = 0; a < lista.length; a++) {
+      for (let b = a + 1; b < lista.length; b++) {
+        for (let c = b + 1; c < lista.length; c++) {
+          for (let d = c + 1; d < lista.length; d++) {
+            const grupo = [lista[a], lista[b], lista[c], lista[d]];
+            const cx = grupo.reduce((s, q) => s + q.x, 0) / 4, cy = grupo.reduce((s, q) => s + q.y, 0) / 4;
+            const ciclo = grupo.slice().sort((p, q) => Math.atan2(p.y - cy, p.x - cx) - Math.atan2(q.y - cy, q.x - cx));
+            const lados = ciclo.map((p, i) => dist(p, ciclo[(i + 1) % 4]));
+            const parecidos = (u, v) => Math.min(u, v) / Math.max(u, v) >= 0.55;
+            if (!parecidos(lados[0], lados[2]) || !parecidos(lados[1], lados[3])) continue;
+            const longo = Math.max(lados[0] + lados[2], lados[1] + lados[3]) / 2, curto = Math.min(lados[0] + lados[2], lados[1] + lados[3]) / 2;
+            if (longo / curto < 1.15 || longo / curto > 2) continue;
+            const areas = grupo.map(q => q.area);
+            if (Math.min(...areas) / Math.max(...areas) < 0.3) continue;
+            const proporcao = Math.sqrt(areas.reduce((s, v) => s + v, 0) / 4) / longo;
+            if (proporcao < 0.012 || proporcao > 0.05) continue;
+            let areaQuadro = 0, convexo = true, sinal = 0;
+            ciclo.forEach((p, i) => {
+              const q = ciclo[(i + 1) % 4], r = ciclo[(i + 2) % 4];
+              areaQuadro += p.x * q.y - q.x * p.y;
+              const giro = (q.x - p.x) * (r.y - q.y) - (q.y - p.y) * (r.x - q.x);
+              if (sinal && Math.sign(giro) !== sinal) convexo = false;
+              sinal = Math.sign(giro);
+            });
+            if (convexo) quadros.push({ ciclo, area: Math.abs(areaQuadro) / 2 });
+          }
+        }
+      }
+    }
+    /* Objetos escuros na mesa podem formar um retângulo maior que o da folha: vários são testados depois. */
+    const ciclos = quadros.sort((p, q) => q.area - p.area).slice(0, 40).map(quadro => quadro.ciclo);
+    return { ciclos, candidatos: lista.length };
+  }
+
+  /* Devolve {pontos: [topo esq., topo dir., base esq., base dir.]} quando a orientação já é conhecida,
+   * ou {ciclos}: retângulos candidatos, para a folha e a orientação serem descobertas pelos traços. */
+  function acharMarcadores(canal, w, h, qr) {
+    const fator = Math.max(1, Math.round(Math.max(w, h) / 1300));
+    const img = reduzir(canal, w, h, fator);
+    const emPixels = pontos => pontos.map(b => [(b.x + 0.5) * fator, (b.y + 0.5) * fator]);
+    const peloQR = qr ? marcadoresPeloQR(img, qr, fator) : null;
+    if (peloQR) return { pontos: emPixels(peloQR), candidatos: 4 };
+    const pelaForma = marcadoresPelaForma(img);
+    if (pelaForma.ciclos.length) return { ciclos: pelaForma.ciclos.map(emPixels), candidatos: pelaForma.candidatos };
+    return { erro: 'Não achei os 4 quadrados pretos. Eles precisam aparecer inteiros na foto.', candidatos: pelaForma.candidatos };
+  }
+
+  /* Confere se os traços laterais aparecem onde esta orientação da folha diz que deveriam estar. */
+  function notaDaOrientacao(img, H) {
+    const N = FOLHA.NUM;
+    /* Média de uma pequena área: um ponto isolado pode cair numa linha de ruído da foto. */
+    const mediaEm = (x, y) => {
+      let soma = 0;
+      for (let dy = -0.4; dy <= 0.41; dy += 0.4) {
+        for (let dx = -0.7; dx <= 0.71; dx += 0.7) {
+          const p = aplicar(H, x + dx, y + dy);
+          soma += valorEm(img, p[0], p[1]);
+        }
+      }
+      return soma / 9;
+    };
+    let melhor = 0;
+    for (let deslocamento = -2; deslocamento <= 2.01; deslocamento += 0.5) {
+      let certos = 0, total = 0;
+      [N.TRACO_ESQ, N.TRACO_DIR].forEach(x => {
+        for (let r = 1; r < N.LINHAS; r += 2) {
+          const y = celulaNumerica(0, r).y + deslocamento;
+          total++;
+          if (mediaEm(x, y) < mediaEm(x, y + N.ALT / 2) * 0.8) certos++;
+        }
+      });
+      melhor = Math.max(melhor, certos / total);
+    }
+    return melhor;
+  }
+
+  function escolherOrientacao(img, ciclos) {
+    const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+    let melhor = null;
+    for (const ciclo of ciclos) {
+      for (let k = 0; k < 4; k++) {
+        const [tl, tr, br, bl] = [0, 1, 2, 3].map(i => ciclo[(k + i) % 4]);
+        if (dist(tl, tr) + dist(bl, br) > dist(tr, br) + dist(tl, bl)) continue;
+        const H = homografia(FOLHA.MARCADOR.CENTROS, [tl, tr, bl, br]);
+        const nota = notaDaOrientacao(img, H);
+        if (!melhor || nota > melhor.nota) melhor = { H, nota };
+      }
+      if (melhor && melhor.nota >= 0.75) break;
+    }
+    return melhor && melhor.nota >= 0.35 ? melhor.H : null;
+  }
+
+  /* Segunda chance para o QR: com a folha já alinhada, recorta a área dele e endireita a imagem. */
+  function lerQRRetificado(img, H) {
+    if (typeof jsQR !== 'function') return null;
+    const Q = FOLHA.QR, margem = 6, porMm = 10;
+    const lado = (Q.LADO + 2 * margem) * porMm;
+    const rgba = new Uint8ClampedArray(lado * lado * 4);
+    const suave = (x, y) => {
+      const x0 = Math.floor(x), y0 = Math.floor(y), tx = x - x0, ty = y - y0;
+      return (valorEm(img, x0, y0) * (1 - tx) + valorEm(img, x0 + 1, y0) * tx) * (1 - ty) +
+        (valorEm(img, x0, y0 + 1) * (1 - tx) + valorEm(img, x0 + 1, y0 + 1) * tx) * ty;
+    };
+    for (let j = 0; j < lado; j++) {
+      for (let i = 0; i < lado; i++) {
+        const p = aplicar(H, Q.X - margem + i / porMm, Q.Y - margem + j / porMm);
+        const v = suave(p[0], p[1]), k = (j * lado + i) * 4;
+        rgba[k] = rgba[k + 1] = rgba[k + 2] = v;
+        rgba[k + 3] = 255;
+      }
+    }
+    const achado = jsQR(rgba, lado, lado, { inversionAttempts: 'dontInvert' });
+    return achado && achado.data ? achado.data : null;
+  }
+
+  function homografia(origem, destino) {
+    const A = [];
+    origem.forEach(([x, y], i) => {
+      const [u, v] = destino[i];
+      A.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+      A.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+    });
+    for (let c = 0; c < 8; c++) {
+      let pivo = c;
+      for (let l = c + 1; l < 8; l++) if (Math.abs(A[l][c]) > Math.abs(A[pivo][c])) pivo = l;
+      [A[c], A[pivo]] = [A[pivo], A[c]];
+      for (let l = 0; l < 8; l++) {
+        if (l === c) continue;
+        const f = A[l][c] / A[c][c];
+        for (let k = c; k < 9; k++) A[l][k] -= f * A[c][k];
+      }
+    }
+    return A.map((linha, i) => linha[8] / linha[i]);
+  }
+
+  function aplicar(H, x, y) {
+    const d = H[6] * x + H[7] * y + 1;
+    return [(H[0] * x + H[1] * y + H[2]) / d, (H[3] * x + H[4] * y + H[5]) / d];
+  }
+
+  function valorEm(img, x, y) {
+    const px = x < 0 ? 0 : x >= img.w - 1 ? img.w - 1 : Math.round(x);
+    const py = y < 0 ? 0 : y >= img.h - 1 ? img.h - 1 : Math.round(y);
+    return img.canal[py * img.w + px];
+  }
+
+  function corridaEscura(perfil, passo, minMm, maxMm) {
+    let min = 255, max = 0;
+    perfil.forEach(v => { if (v < min) min = v; if (v > max) max = v; });
+    if (max - min < 22) return null;
+    const limiar = (min + max) / 2;
+    const meio = (perfil.length - 1) / 2;
+    let melhor = null;
+    for (let i = 0; i < perfil.length; i++) {
+      if (perfil[i] >= limiar) continue;
+      let f = i;
+      while (f + 1 < perfil.length && perfil[f + 1] < limiar) f++;
+      const largura = (f - i + 1) * passo;
+      if (largura >= minMm && largura <= maxMm) {
+        const centro = ((i + f) / 2 - meio) * passo;
+        if (!melhor || Math.abs(centro) < Math.abs(melhor.centro)) melhor = { centro };
+      }
+      i = f;
+    }
+    return melhor;
+  }
+
+  function localizarTraco(img, centro, ux, uy) {
+    const passo = 0.2;
+    const ponto = (u, v) => valorEm(img, centro[0] + ux[0] * u + uy[0] * v, centro[1] + ux[1] * u + uy[1] * v);
+    const perfilV = [];
+    for (let i = -10; i <= 10; i++) {
+      let soma = 0;
+      for (let j = -4; j <= 4; j++) soma += ponto(j * 0.25, i * passo);
+      perfilV.push(soma / 9);
+    }
+    const vertical = corridaEscura(perfilV, passo, 0.6, 3);
+    if (!vertical) return null;
+    const perfilU = [];
+    for (let i = -15; i <= 15; i++) {
+      let soma = 0;
+      for (let j = -2; j <= 2; j++) soma += ponto(i * passo, vertical.centro + j * 0.2);
+      perfilU.push(soma / 5);
+    }
+    const horizontal = corridaEscura(perfilU, passo, 1.4, 5);
+    return { du: horizontal ? horizontal.centro : 0, dv: vertical.centro };
+  }
+
+  function mediana(lista) {
+    const v = lista.slice().sort((a, b) => a - b);
+    return v[Math.floor(v.length / 2)];
+  }
+
+  /* Bloco de início: tem formato próprio e fica acima do primeiro traço. Começar por ele impede que a
+   * leitura escorregue uma linha inteira ou pegue a coluna vizinha quando a folha ondulada desloca a tabela. */
+  function acharBlocoInicial(img, H, x, y) {
+    const c = aplicar(H, x, y), a = aplicar(H, x + 1, y), b = aplicar(H, x, y + 1);
+    const ux = [a[0] - c[0], a[1] - c[1]], uy = [b[0] - c[0], b[1] - c[1]];
+    const passo = 0.25, meiaU = 24, meiaV = 36;
+    const largura = meiaU * 2 + 1, altura = meiaV * 2 + 1;
+    const grade = new Uint8Array(largura * altura);
+    let min = 255, max = 0;
+    for (let j = 0; j < altura; j++) {
+      for (let i = 0; i < largura; i++) {
+        const u = (i - meiaU) * passo, v = (j - meiaV) * passo;
+        const valor = valorEm(img, c[0] + ux[0] * u + uy[0] * v, c[1] + ux[1] * u + uy[1] * v);
+        grade[j * largura + i] = valor;
+        if (valor < min) min = valor;
+        if (valor > max) max = valor;
+      }
+    }
+    if (max - min < 22) return null;
+    const limiar = (min + max) / 2;
+    const bin = grade.map(valor => (valor < limiar ? 1 : 0));
+    const candidatos = componentes(bin, largura, altura).filter(bloco => {
+      const l = bloco.maxX - bloco.minX + 1, h = bloco.maxY - bloco.minY + 1;
+      return l * passo >= 3.6 && l * passo <= 6.4 && h * passo >= 2 && h * passo <= 4 && bloco.area / (l * h) >= 0.7;
+    });
+    if (!candidatos.length) return null;
+    const maior = candidatos.reduce((p, q) => (q.area > p.area ? q : p));
+    return { du: (maior.x - meiaU) * passo, dv: (maior.y - meiaV) * passo };
+  }
+
+  /* Segue os traços de cima para baixo: cada desvio parte do desvio do traço anterior. */
+  function rastrearTracos(img, H, x, ys) {
+    const inicio = acharBlocoInicial(img, H, x, ys[0] - FOLHA.BLOCO.RECUO);
+    let du = inicio ? inicio.du : 0, dv = inicio ? inicio.dv : 0;
+    const brutos = ys.map(y => {
+      const c = aplicar(H, x, y), a = aplicar(H, x + 1, y), b = aplicar(H, x, y + 1);
+      const ux = [a[0] - c[0], a[1] - c[1]], uy = [b[0] - c[0], b[1] - c[1]];
+      const centro = [c[0] + ux[0] * du + uy[0] * dv, c[1] + ux[1] * du + uy[1] * dv];
+      const achado = localizarTraco(img, centro, ux, uy);
+      if (achado) { du += achado.du; dv += achado.dv; }
+      return { c, ux, uy, du, dv, achado: Boolean(achado) };
+    });
+    const pontos = brutos.map((b, i) => {
+      const vizinhos = brutos.slice(Math.max(0, i - 2), i + 3);
+      const medU = mediana(vizinhos.map(v => v.du)), medV = mediana(vizinhos.map(v => v.dv));
+      const finalU = Math.abs(b.du - medU) > 0.8 ? medU : b.du;
+      const finalV = Math.abs(b.dv - medV) > 0.8 ? medV : b.dv;
+      return { p: [b.c[0] + b.ux[0] * finalU + b.uy[0] * finalV, b.c[1] + b.ux[1] * finalU + b.uy[1] * finalV], du: finalU, dv: finalV, achado: b.achado, uy: b.uy };
+    });
+    pontos.blocoAchado = Boolean(inicio);
+    return pontos;
+  }
+
+  /* Trava de segurança: uma leitura desalinhada não pode virar resposta errada sem aviso. */
+  function motivosDeRecusa(colunasDeTracos, tracos, colunas, pxPorMm) {
+    const motivos = [];
+    if (pxPorMm < LEITURA.MIN_PX_MM) motivos.push('a folha ficou pequena na foto: aproxime a câmera');
+    if (colunasDeTracos.some(lista => !lista.blocoAchado)) motivos.push('faltou um bloco de início');
+    if (tracos.filter(t => t.achado).length < tracos.length * 0.9) motivos.push('muitos traços de alinhamento não apareceram');
+    if (colunas.some(coluna => coluna.leitura.linhas.length > 3)) motivos.push('coluna com marcas demais, sinal de desalinhamento');
+    return motivos;
+  }
+
+  /* Centro e eixos da célula: posição entre os traços esquerdo e direito da mesma linha. */
+  function localDaCelula(H, celula, xEsq, xDir, esq, dir) {
+    const p0 = aplicar(H, xEsq, celula.y), p1 = aplicar(H, xDir, celula.y), pc = aplicar(H, celula.x, celula.y);
+    const t = Math.hypot(pc[0] - p0[0], pc[1] - p0[1]) / Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+    const centro = [esq.p[0] + (dir.p[0] - esq.p[0]) * t, esq.p[1] + (dir.p[1] - esq.p[1]) * t];
+    const mm = xDir - xEsq;
+    return { centro, ux: [(dir.p[0] - esq.p[0]) / mm, (dir.p[1] - esq.p[1]) / mm], uy: esq.uy };
+  }
+
+  /* Brilho do papel em cada região da foto (blocos de cerca de 4 mm): é a referência para separar tinta
+   * de sombra. Em cada bloco vale um dos pontos mais claros, e o maior valor entre os blocos vizinhos
+   * cobre o caso de um bloco inteiro pintado. */
+  function mapaDoPapel(img, tamanhoBloco) {
+    const b = Math.max(8, Math.round(tamanhoBloco));
+    const cols = Math.ceil(img.w / b), lins = Math.ceil(img.h / b);
+    const claros = new Uint8Array(cols * lins);
+    const histograma = new Uint32Array(256);
+    for (let l = 0; l < lins; l++) {
+      for (let c = 0; c < cols; c++) {
+        histograma.fill(0);
+        let total = 0;
+        const y1 = Math.min(img.h, (l + 1) * b), x1 = Math.min(img.w, (c + 1) * b);
+        for (let y = l * b; y < y1; y += 2) {
+          for (let x = c * b; x < x1; x += 2) { histograma[img.canal[y * img.w + x]]++; total++; }
+        }
+        let resto = total * 0.1, nivel = 255;
+        while (nivel > 0 && resto > 0) { resto -= histograma[nivel]; nivel--; }
+        claros[l * cols + c] = nivel;
+      }
+    }
+    const brilho = new Float32Array(cols * lins);
+    for (let l = 0; l < lins; l++) {
+      for (let c = 0; c < cols; c++) {
+        let maior = 0;
+        for (let dl = -1; dl <= 1; dl++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const nl = l + dl, nc = c + dc;
+            if (nl >= 0 && nc >= 0 && nl < lins && nc < cols && claros[nl * cols + nc] > maior) maior = claros[nl * cols + nc];
+          }
+        }
+        brilho[l * cols + c] = maior;
+      }
+    }
+    return { b, cols, lins, brilho };
+  }
+
+  function papelEm(mapa, x, y) {
+    const fx = Math.max(0, Math.min(mapa.cols - 1.001, x / mapa.b - 0.5));
+    const fy = Math.max(0, Math.min(mapa.lins - 1.001, y / mapa.b - 0.5));
+    const c = Math.floor(fx), l = Math.floor(fy), tx = fx - c, ty = fy - l;
+    const v = (dl, dc) => mapa.brilho[(l + dl) * mapa.cols + c + dc];
+    return (v(0, 0) * (1 - tx) + v(0, 1) * tx) * (1 - ty) + (v(1, 0) * (1 - tx) + v(1, 1) * tx) * ty;
+  }
+
+  /* Mede só a área central da célula, porque as bordas têm a grade impressa.
+   * fracao: parte da área coberta por tinta. escuro: quanto a célula escureceu em média.
+   * A tinta é avaliada em ladrilhos de cerca de 1 mm: ruído fino da foto se cancela, e o traço de caneta não. */
+  function medirCelula(img, mapa, local, meiaL, meiaA) {
+    const papel = papelEm(mapa, local.centro[0], local.centro[1]);
+    const limite = papel * (1 - LEITURA.TINTA);
+    const passo = 0.22, porLadrilho = 4;
+    const nU = Math.floor(2 * meiaL / passo) + 1, nV = Math.floor(2 * meiaA / passo) + 1;
+    const colunas = Math.ceil(nU / porLadrilho), linhas = Math.ceil(nV / porLadrilho);
+    const somas = new Float32Array(colunas * linhas), contagens = new Uint16Array(colunas * linhas);
+    let soma = 0;
+    for (let j = 0; j < nV; j++) {
+      const v = -meiaA + j * passo;
+      for (let i = 0; i < nU; i++) {
+        const u = -meiaL + i * passo;
+        const valor = valorEm(img, local.centro[0] + local.ux[0] * u + local.uy[0] * v, local.centro[1] + local.ux[1] * u + local.uy[1] * v);
+        const ladrilho = Math.floor(j / porLadrilho) * colunas + Math.floor(i / porLadrilho);
+        somas[ladrilho] += valor;
+        contagens[ladrilho]++;
+        soma += valor;
+      }
+    }
+    let escuros = 0;
+    somas.forEach((total, ladrilho) => { if (total / contagens[ladrilho] < limite) escuros += contagens[ladrilho]; });
+    const total = nU * nV;
+    return { fracao: escuros / total, escuro: 1 - soma / total / papel };
+  }
+
+  /* Traço claro de lápis não passa do limite de tinta, mas escurece a célula: esse ganho entra na conta.
+   * A base vem das células ao redor: uma sombra escurece todas por igual e se cancela, e o quantil
+   * baixo evita que as marcas vizinhas puxem a base para cima. grade: [coluna][linha] */
+  function calcularTinta(grade, raioColuna, raioLinha, quantil) {
+    grade.forEach((coluna, c) => coluna.forEach((celula, r) => {
+      const vizinhas = [];
+      for (let dc = -raioColuna; dc <= raioColuna; dc++) {
+        const outra = grade[c + dc];
+        if (!outra) continue;
+        for (let dr = -raioLinha; dr <= raioLinha; dr++) if (outra[r + dr]) vizinhas.push(outra[r + dr].escuro);
+      }
+      vizinhas.sort((a, b) => a - b);
+      celula.base = vizinhas[Math.floor((vizinhas.length - 1) * quantil)];
+      celula.tinta = Math.max(celula.fracao, LEITURA.GANHO * Math.max(0, celula.escuro - celula.base));
+    }));
+  }
+
+  /* Pintura que passa da borda suja a célula ao lado. Cada célula perde parte da tinta da vizinha mais
+   * pintada: isso apaga o borrão e mantém duas marcas reais encostadas. grade: [coluna][linha] */
+  function descontarVizinhas(grade) {
+    const bruta = grade.map(coluna => coluna.map(celula => celula.tinta));
+    const em = (c, r) => (bruta[c] && bruta[c][r] !== undefined ? bruta[c][r] : 0);
+    grade.forEach((coluna, c) => coluna.forEach((celula, r) => {
+      const vizinha = Math.max(em(c, r - 1), em(c, r + 1), em(c - 1, r), em(c + 1, r));
+      celula.tinta = Math.max(0, bruta[c][r] - LEITURA.BORRAO * vizinha);
+    }));
+  }
+
+  function decidirColuna(fracoes, tintaNDA) {
+    const ordem = fracoes.map((f, linha) => ({ f, linha })).sort((a, b) => b.f - a.f);
+    const nda = tintaNDA >= LEITURA.NDA;
+    const topo = ordem[0];
+    if (topo.f < LEITURA.DUVIDA) return { tipo: nda ? 'nda' : 'branco', linhas: [] };
+    if (topo.f < LEITURA.MARCA) return { tipo: 'duvida', linhas: [topo.linha] };
+    const marcadas = ordem.filter(o => o.f >= Math.max(LEITURA.MARCA, topo.f * LEITURA.SEGUNDA)).map(o => o.linha).sort((a, b) => a - b);
+    if (marcadas.length > 1) return { tipo: 'dupla', linhas: marcadas };
+    return nda ? { tipo: 'duvida', linhas: marcadas } : { tipo: 'uma', linhas: marcadas };
+  }
+
+  function decidirVF(fV, fF) {
+    const maior = Math.max(fV, fF);
+    if (maior < LEITURA.DUVIDA) return '';
+    if (maior < LEITURA.MARCA) return '?';
+    const v = fV >= Math.max(LEITURA.MARCA, maior * LEITURA.SEGUNDA);
+    const f = fF >= Math.max(LEITURA.MARCA, maior * LEITURA.SEGUNDA);
+    return v && f ? 'VF' : v ? 'V' : 'F';
+  }
+
+  function lerCanvas(canvas) {
+    const inicio = performance.now();
+    const w = canvas.width, h = canvas.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const canal = criarCanal(ctx.getImageData(0, 0, w, h).data, w, h);
+    const img = { canal, w, h };
+    const qr = acharQR(canvas);
+    const achados = acharMarcadores(canal, w, h, qr);
+    const base = { w, h, qr: qr ? qr.texto : null, candidatos: achados.candidatos || 0 };
+    if (achados.erro) return Object.assign(base, { erro: achados.erro, ms: Math.round(performance.now() - inicio) });
+
+    const H = achados.pontos ? homografia(FOLHA.MARCADOR.CENTROS, achados.pontos) : escolherOrientacao(img, achados.ciclos);
+    if (!H) return Object.assign(base, { erro: 'Achei os quadrados pretos, mas não reconheci a folha entre eles.', ms: Math.round(performance.now() - inicio) });
+    if (!qr) base.qr = lerQRRetificado(img, H);
+    if (qr) {
+      const previsto = aplicar(H, FOLHA.QR.X + FOLHA.QR.LADO / 2, FOLHA.QR.Y + FOLHA.QR.LADO / 2);
+      const real = [(qr.tl[0] + qr.br[0]) / 2, (qr.tl[1] + qr.br[1]) / 2];
+      const pxPorMm = Math.hypot(qr.tr[0] - qr.tl[0], qr.tr[1] - qr.tl[1]) / FOLHA.QR.LADO;
+      if (Math.hypot(previsto[0] - real[0], previsto[1] - real[1]) / pxPorMm > 10) {
+        return Object.assign(base, { erro: 'Os 4 quadrados pretos precisam aparecer inteiros na foto.', ms: Math.round(performance.now() - inicio) });
+      }
+    }
+
+    const N = FOLHA.NUM, V = FOLHA.VF;
+    const ysNum = Array.from({ length: N.LINHAS }, (_, r) => celulaNumerica(0, r).y).concat([celulaNDA(0).y]);
+    const ysVF = Array.from({ length: V.LINHAS }, (_, r) => V.Y + V.ALT * (r + 0.5));
+    const escalaCentro = aplicar(H, 106, 148), escalaLado = aplicar(H, 105, 148);
+    const escala = Math.hypot(escalaCentro[0] - escalaLado[0], escalaCentro[1] - escalaLado[1]);
+    const suave = { canal: suavizar(canal, w, h, Math.max(1, Math.round(escala * LEITURA.SUAVE_MM))), w, h };
+    const tracosNum = { esq: rastrearTracos(suave, H, N.TRACO_ESQ, ysNum), dir: rastrearTracos(suave, H, N.TRACO_DIR, ysNum) };
+    const tracosVF = { esq: rastrearTracos(suave, H, V.TRACO_ESQ, ysVF), dir: rastrearTracos(suave, H, V.TRACO_DIR, ysVF) };
+
+    const mapa = mapaDoPapel(suave, 4 * escala);
+
+    const colunas = [];
+    for (let c = 0; c < N.COLS; c++) {
+      const celulas = [];
+      for (let r = 0; r < N.LINHAS; r++) {
+        const local = localDaCelula(H, celulaNumerica(c, r), N.TRACO_ESQ, N.TRACO_DIR, tracosNum.esq[r], tracosNum.dir[r]);
+        celulas.push(Object.assign({ local, l: N.LARG, a: N.ALT }, medirCelula(suave, mapa, local, N.LARG * 0.34, N.ALT * 0.28)));
+      }
+      const localNDA = localDaCelula(H, celulaNDA(c), N.TRACO_ESQ, N.TRACO_DIR, tracosNum.esq[N.LINHAS], tracosNum.dir[N.LINHAS]);
+      const nda = Object.assign({ local: localNDA, l: N.LARG, a: N.ALT_NDA }, medirCelula(suave, mapa, localNDA, N.LARG * 0.36, N.ALT_NDA * 0.38));
+      colunas.push({ celulas, nda });
+    }
+    calcularTinta(colunas.map(coluna => coluna.celulas), 2, 2, 0.5);
+    colunas.forEach(coluna => {
+      const base = coluna.celulas[N.LINHAS - 1].base;
+      coluna.nda.tinta = Math.max(coluna.nda.fracao, LEITURA.GANHO * Math.max(0, coluna.nda.escuro - base));
+    });
+    descontarVizinhas(colunas.map(coluna => coluna.celulas));
+    colunas.forEach(coluna => { coluna.leitura = decidirColuna(coluna.celulas.map(x => x.tinta), coluna.nda.tinta); });
+
+    const itens = V.LINHAS * V.GRUPOS;
+    const celulasVF = Array.from({ length: itens }, () => [null, null]);
+    const gradesVF = [];
+    for (let g = 0; g < V.GRUPOS; g++) {
+      const grade = [[], []];
+      for (let lado = 0; lado < 2; lado++) {
+        for (let r = 0; r < V.LINHAS; r++) {
+          const item = g * V.LINHAS + r;
+          const local = localDaCelula(H, celulaVF(item, lado), V.TRACO_ESQ, V.TRACO_DIR, tracosVF.esq[r], tracosVF.dir[r]);
+          const celula = Object.assign({ local, l: V.LARG, a: V.ALT }, medirCelula(suave, mapa, local, V.LARG * 0.34, V.ALT * 0.28));
+          celulasVF[item][lado] = celula;
+          grade[lado].push(celula);
+        }
+      }
+      gradesVF.push(grade);
+    }
+    gradesVF.forEach(grade => {
+      calcularTinta(grade, 1, 2, 0.3);
+      descontarVizinhas(grade);
+    });
+    const lidasVF = celulasVF.map(par => decidirVF(par[0].tinta, par[1].tinta));
+
+    const tracos = [].concat(tracosNum.esq, tracosNum.dir, tracosVF.esq, tracosVF.dir);
+    const pxPorMm = Math.hypot(tracosNum.dir[27].p[0] - tracosNum.esq[27].p[0], tracosNum.dir[27].p[1] - tracosNum.esq[27].p[1]) / (N.TRACO_DIR - N.TRACO_ESQ);
+    return Object.assign(base, {
+      H, colunas, celulasVF, lidasVF, tracos, pxPorMm,
+      recusa: motivosDeRecusa([tracosNum.esq, tracosNum.dir, tracosVF.esq, tracosVF.dir], tracos, colunas, pxPorMm),
+      tracosAchados: tracos.filter(t => t.achado).length,
+      desvioMaximo: Math.max(...tracos.map(t => Math.hypot(t.du, t.dv))),
+      ms: Math.round(performance.now() - inicio)
+    });
+  }
+
+  /* Compara a leitura com o que a folha pedia. */
+  function conferir(leitura, numero) {
+    const gab = gabaritoDaFolha(numero);
+    const iguais = (a, b) => a.tipo === b.tipo && a.linhas.join() === b.linhas.join();
+    const errosNum = [], errosVF = [];
+    let menorMarca = 1, maiorBranco = 0;
+    leitura.colunas.forEach((coluna, c) => {
+      const esperado = gab.numericas[c];
+      if (!iguais(coluna.leitura, esperado)) {
+        const linhas = coluna.leitura.linhas.map(l => l + 1).join('+') || '-';
+        const pedido = esperado.linhas.map(l => l + 1).join('+') || '-';
+        errosNum.push(`${LETRAS[c]}: leu ${coluna.leitura.tipo} ${linhas}, era ${esperado.tipo} ${pedido}`);
+      }
+      coluna.celulas.forEach((celula, r) => {
+        if (esperado.linhas.includes(r)) menorMarca = Math.min(menorMarca, celula.tinta);
+        else maiorBranco = Math.max(maiorBranco, celula.tinta);
+      });
+    });
+    leitura.lidasVF.forEach((lida, i) => {
+      const esperada = gab.vf[i];
+      if (lida !== esperada) errosVF.push(`${i + 1}: leu ${lida || 'branco'}, era ${esperada || 'branco'}`);
+      leitura.celulasVF[i].forEach((celula, lado) => {
+        if (esperada.includes(lado ? 'F' : 'V')) menorMarca = Math.min(menorMarca, celula.tinta);
+        else maiorBranco = Math.max(maiorBranco, celula.tinta);
+      });
+    });
+    return {
+      gab, errosNum, errosVF, menorMarca, maiorBranco,
+      certasNum: leitura.colunas.length - errosNum.length, totalNum: leitura.colunas.length,
+      certasVF: leitura.lidasVF.length - errosVF.length, totalVF: leitura.lidasVF.length
+    };
+  }
+
+  function numeroDaFolha(texto) {
+    const achada = FOLHAS.find(info => codigoDaFolha(info.numero) === String(texto));
+    return achada ? achada.numero : null;
+  }
+
+  /* ================================== TELA ================================== */
+  const elementos = id => document.getElementById(id);
+  const historico = [];
+  const ambiente = [];
+  let urlFoto = null;
+
+  function atualizarRelatorio() {
+    elementos('relatorio').value = ambiente.concat(historico).join('\n');
+  }
+
+  function desenharResultado(canvas, leitura, conferencia) {
+    const destino = elementos('imagemResultado');
+    const escala = Math.min(1, 1400 / Math.max(canvas.width, canvas.height));
+    destino.width = Math.round(canvas.width * escala);
+    destino.height = Math.round(canvas.height * escala);
+    const ctx = destino.getContext('2d');
+    ctx.drawImage(canvas, 0, 0, destino.width, destino.height);
+    if (!leitura.colunas) return;
+    ctx.save();
+    ctx.scale(escala, escala);
+    ctx.lineWidth = Math.max(2, 1.6 / escala);
+    const caixa = (celula, cor) => {
+      const { centro, ux, uy } = celula.local;
+      const l = celula.l / 2, a = celula.a / 2;
+      const canto = (s, t) => [centro[0] + ux[0] * s * l + uy[0] * t * a, centro[1] + ux[1] * s * l + uy[1] * t * a];
+      ctx.strokeStyle = cor;
+      ctx.beginPath();
+      [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([s, t], i) => {
+        const p = canto(s, t);
+        if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]);
+      });
+      ctx.closePath();
+      ctx.stroke();
+    };
+    ctx.fillStyle = '#1a73e8';
+    leitura.tracos.forEach(t => { if (t.achado) ctx.fillRect(t.p[0] - 3, t.p[1] - 3, 6, 6); });
+    const gab = conferencia ? conferencia.gab : null;
+    leitura.colunas.forEach((coluna, c) => {
+      const lidas = coluna.leitura.linhas;
+      const pedidas = gab ? gab.numericas[c].linhas : lidas;
+      const duvida = coluna.leitura.tipo === 'duvida';
+      lidas.forEach(l => caixa(coluna.celulas[l], duvida ? '#f9ab00' : pedidas.includes(l) ? '#0a8f4a' : '#d93025'));
+      pedidas.forEach(l => { if (!lidas.includes(l)) caixa(coluna.celulas[l], '#d93025'); });
+      if (coluna.leitura.tipo === 'nda') caixa(coluna.nda, gab && gab.numericas[c].tipo === 'nda' ? '#0a8f4a' : '#d93025');
+    });
+    leitura.lidasVF.forEach((lida, item) => {
+      const pedida = gab ? gab.vf[item] : lida;
+      [0, 1].forEach(lado => {
+        const letra = lado ? 'F' : 'V';
+        const celula = leitura.celulasVF[item][lado];
+        if (lida === '?') { caixa(celula, '#f9ab00'); return; }
+        if (lida.includes(letra)) caixa(celula, pedida.includes(letra) ? '#0a8f4a' : '#d93025');
+        else if (pedida.includes(letra)) caixa(celula, '#d93025');
+      });
+    });
+    ctx.restore();
+  }
+
+  function mostrarResumo(leitura, conferencia, origem) {
+    const resumo = elementos('resumo');
+    const fmt = v => v.toFixed(2).replace('.', ',');
+    if (!leitura.colunas) {
+      resumo.innerHTML = `<p class="grande erro">Não consegui ler esta foto</p><p>${esc(leitura.erro)} QR: ${leitura.qr ? esc(leitura.qr) : 'não lido'}.</p>`;
+    } else if (leitura.recusa.length) {
+      resumo.innerHTML = `<p class="grande erro">Tire outra foto</p><p>A leitura foi recusada: ${esc(leitura.recusa.join('; '))}.</p>`;
+    } else if (!conferencia) {
+      resumo.innerHTML = `<p class="grande">Leitura feita, mas o QR não foi lido</p><p>Sem o QR, não sei qual folha é. Escolha a folha na lista acima e leia de novo.</p>`;
+    } else {
+      const acertou = !conferencia.errosNum.length && !conferencia.errosVF.length;
+      resumo.innerHTML = `<p class="grande ${acertou ? 'ok' : 'erro'}">Numérico ${conferencia.certasNum}/${conferencia.totalNum} · V/F ${conferencia.certasVF}/${conferencia.totalVF}</p>` +
+        `<p>Tempo: ${(leitura.ms / 1000).toFixed(1).replace('.', ',')} s · Foto: ${leitura.w}×${leitura.h} (${fmt(leitura.pxPorMm)} px/mm) · Traços: ${leitura.tracosAchados}/${leitura.tracos.length}</p>` +
+        (acertou ? '' : `<p class="erro">${esc(conferencia.errosNum.concat(conferencia.errosVF).join(' | '))}</p>`);
+    }
+    const partes = [`#${historico.length + 1}`, origem, `${leitura.w}x${leitura.h}`, `${leitura.ms}ms`, `QR=${leitura.qr || 'não'}`];
+    if (!leitura.colunas) {
+      partes.push(`ERRO ${leitura.erro}`, `candidatos=${leitura.candidatos}`);
+    } else {
+      partes.push(`${leitura.pxPorMm.toFixed(1)}px/mm`, `traços=${leitura.tracosAchados}/${leitura.tracos.length}`, `desvio=${leitura.desvioMaximo.toFixed(1)}mm`);
+      if (leitura.recusa.length) partes.push(`RECUSADA: ${leitura.recusa.join('; ')}`);
+      if (conferencia) {
+        partes.push(`num=${conferencia.certasNum}/${conferencia.totalNum}`, `vf=${conferencia.certasVF}/${conferencia.totalVF}`,
+          `menorMarca=${conferencia.menorMarca.toFixed(2)}`, `maiorBranco=${conferencia.maiorBranco.toFixed(2)}`);
+        const erros = conferencia.errosNum.concat(conferencia.errosVF);
+        if (erros.length) partes.push(`erros: ${erros.join('; ')}`);
+      }
+    }
+    historico.push(partes.join(' | '));
+    atualizarRelatorio();
+  }
+
+  async function lerEMostrar(canvas, origem) {
+    elementos('painelResultado').hidden = false;
+    elementos('resumo').innerHTML = '<p class="grande">Lendo…</p>';
+    await new Promise(resolve => setTimeout(resolve, 30));
+    let leitura;
+    try {
+      leitura = lerCanvas(canvas);
+    } catch (erro) {
+      console.error(erro);
+      leitura = { w: canvas.width, h: canvas.height, ms: 0, qr: null, erro: 'Falha na leitura: ' + erro.message, candidatos: 0 };
+    }
+    const numero = (leitura.qr ? numeroDaFolha(leitura.qr) : null) || Number(elementos('folhaManual').value) || null;
+    const conferencia = leitura.colunas && numero ? conferir(leitura, numero) : null;
+    desenharResultado(canvas, leitura, conferencia);
+    mostrarResumo(leitura, conferencia, origem);
+    elementos('baixarImagem').href = elementos('imagemResultado').toDataURL('image/jpeg', 0.85);
+    elementos('painelResultado').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return { leitura, conferencia };
+  }
+
+  async function lerArquivo(arquivo, origem) {
+    if (!arquivo) return null;
+    if (urlFoto) URL.revokeObjectURL(urlFoto);
+    urlFoto = URL.createObjectURL(arquivo);
+    const imagem = new Image();
+    imagem.src = urlFoto;
+    await imagem.decode();
+    const escala = Math.min(1, 2600 / Math.max(imagem.naturalWidth, imagem.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(imagem.naturalWidth * escala);
+    canvas.height = Math.round(imagem.naturalHeight * escala);
+    canvas.getContext('2d', { willReadFrequently: true }).drawImage(imagem, 0, 0, canvas.width, canvas.height);
+    const baixar = elementos('baixarFoto');
+    baixar.href = urlFoto;
+    baixar.hidden = false;
+    return lerEMostrar(canvas, origem);
+  }
+
+  let fluxoCamera = null;
+
+  function fecharCamera() {
+    if (fluxoCamera) fluxoCamera.getTracks().forEach(trilha => trilha.stop());
+    fluxoCamera = null;
+    elementos('painelAoVivo').hidden = true;
+  }
+
+  async function abrirCamera() {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('getUserMedia indisponível neste navegador ou nesta página');
+      fluxoCamera = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } }
+      });
+      const video = elementos('video');
+      video.srcObject = fluxoCamera;
+      elementos('painelAoVivo').hidden = false;
+      await video.play();
+      const ajustes = fluxoCamera.getVideoTracks()[0].getSettings();
+      ambiente.push(`Câmera ao vivo: FUNCIONOU (${ajustes.width}x${ajustes.height})`);
+    } catch (erro) {
+      ambiente.push(`Câmera ao vivo: FALHOU (${erro.name}: ${erro.message})`);
+      alert('A câmera ao vivo não abriu nesta página: ' + erro.name + '. Isso fica registrado no relatório. O botão "Tirar foto da folha" continua funcionando.');
+    }
+    atualizarRelatorio();
+  }
+
+  function capturarDaCamera() {
+    const video = elementos('video');
+    if (!video.videoWidth) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d', { willReadFrequently: true }).drawImage(video, 0, 0);
+    elementos('baixarFoto').hidden = true;
+    lerEMostrar(canvas, 'ao vivo');
+  }
+
+  async function copiarRelatorio() {
+    const campo = elementos('relatorio');
+    campo.focus();
+    campo.select();
+    let copiou = false;
+    try { await navigator.clipboard.writeText(campo.value); copiou = true; } catch (erro) { /* cai para o método antigo */ }
+    if (!copiou) { try { copiou = document.execCommand('copy'); } catch (erro) { /* seleção manual */ } }
+    elementos('botaoCopiar').textContent = copiou ? 'Copiado' : 'Selecione o texto e copie';
+  }
+
+  function iniciar() {
+    const faltando = [typeof jsQR === 'function' ? '' : 'leitor de QR', typeof qrcode === 'function' ? '' : 'gerador de QR'].filter(Boolean);
+    elementos('estadoBibliotecas').textContent = faltando.length ? `Atenção: não carregou ${faltando.join(' e ')}. Confira a internet e recarregue.` : '';
+    ambiente.push(`Aparelho: ${navigator.userAgent}`);
+    ambiente.push(`Tela: ${screen.width}x${screen.height} a ${window.devicePixelRatio}x · bibliotecas: ${faltando.length ? 'FALTANDO ' + faltando.join(', ') : 'ok'}`);
+    atualizarRelatorio();
+
+    elementos('entradaFoto').addEventListener('change', evento => { lerArquivo(evento.target.files[0], 'foto'); evento.target.value = ''; });
+    elementos('entradaGaleria').addEventListener('change', evento => { lerArquivo(evento.target.files[0], 'galeria'); evento.target.value = ''; });
+    elementos('botaoAoVivo').addEventListener('click', abrirCamera);
+    elementos('botaoCapturar').addEventListener('click', capturarDaCamera);
+    elementos('botaoFecharCamera').addEventListener('click', fecharCamera);
+    elementos('botaoCopiar').addEventListener('click', copiarRelatorio);
+    elementos('botaoFolhas').addEventListener('click', () => { montarFolhas(); window.print(); });
+
+    if (new URLSearchParams(location.search).has('folhas')) {
+      montarFolhas();
+      document.body.classList.add('ver-folhas');
+    }
+  }
+  iniciar();
+</script>
+</body>
+</html>
