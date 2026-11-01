@@ -328,8 +328,11 @@
     GANHO: 2,        /* peso do escurecimento médio da célula, que revela o traço claro de lápis */
     SUAVE_MM: 0.25,  /* raio da suavização da imagem antes da leitura das células */
     NDA: 0.05,       /* tinta mínima na célula N.D.A. */
-    MIN_PX_MM: 3.2   /* abaixo disto a folha está pequena demais na foto para uma leitura segura */
+    MIN_PX_MM: 3.2,  /* abaixo disto a folha está pequena demais na foto para uma leitura segura */
+    LADO_BUSCA: 640, /* maior lado da imagem pequena em que a folha é procurada */
+    CICLOS_COM_QR: 12  /* quantos retângulos de quadrados têm o QR conferido nos quatro giros */
   };
+  const FOLHA_NAO_CONFERE = 'Esta folha não confere com a prova aberta no tablet. Confira a prova escolhida ou publique a prova de novo, depois de gerar as folhas.';
 
   function criarCanal(rgba, w, h) {
     /* Brilho da imagem: caneta de qualquer cor escurece, e um tom de luz ou de tela pesa pouco. */
@@ -530,11 +533,17 @@
   function acharMarcadores(canal, w, h, qr, medidas) {
     const fator = Math.max(1, Math.round(Math.max(w, h) / 1300));
     const img = reduzir(canal, w, h, fator);
-    const emPixels = pontos => pontos.map(b => [(b.x + 0.5) * fator, (b.y + 0.5) * fator]);
+    const emPixels = (pontos, escala) => pontos.map(b => [(b.x + 0.5) * escala, (b.y + 0.5) * escala]);
     const peloQR = qr ? marcadoresPeloQR(img, qr, fator, medidas) : null;
-    if (peloQR) return { pontos: emPixels(peloQR), candidatos: 4 };
+    if (peloQR) return { pontos: emPixels(peloQR, fator), candidatos: 4 };
     const pelaForma = marcadoresPelaForma(img, medidas);
-    if (pelaForma.ciclos.length) return { ciclos: pelaForma.ciclos.map(emPixels), candidatos: pelaForma.candidatos };
+    const ciclos = pelaForma.ciclos.map(pontos => emPixels(pontos, fator));
+    /* A mesma busca da espera, na imagem pequena: ali a textura da mesa quase não aparece. */
+    const fatorPequeno = Math.max(1, Math.round(Math.max(w, h) / LEITURA.LADO_BUSCA));
+    const pequena = reduzir(canal, w, h, fatorPequeno);
+    const naEspera = marcadoresPelaForma(pequena, medidas, [Math.max(pequena.w, pequena.h) / 14]);
+    ciclos.splice(LEITURA.CICLOS_COM_QR - 2, 0, ...naEspera.ciclos.slice(0, 2).map(pontos => emPixels(pontos, fatorPequeno)));
+    if (ciclos.length) return { ciclos, candidatos: pelaForma.candidatos };
     return { erro: 'Os 4 quadrados pretos precisam aparecer inteiros na imagem.', candidatos: pelaForma.candidatos };
   }
 
@@ -567,18 +576,40 @@
     return melhor;
   }
 
-  function escolherOrientacao(img, ciclos, medidas) {
+  function girosDoCiclo(ciclo, medidas) {
+    return [0, 1, 2, 3].map(k => {
+      const [tl, tr, br, bl] = [0, 1, 2, 3].map(i => ciclo[(k + i) % 4]);
+      return homografia(medidas.marcadores, [tl, tr, bl, br]);
+    });
+  }
+
+  /* O QR só aparece no lugar previsto com a folha certa e o giro certo. */
+  function qrNoLugar(H, qr, medidas) {
+    const previsto = aplicar(H, medidas.qr.x + medidas.qr.lado / 2, medidas.qr.y + medidas.qr.lado / 2);
+    const real = [(qr.tl[0] + qr.br[0]) / 2, (qr.tl[1] + qr.br[1]) / 2];
+    const pxQR = Math.hypot(qr.tr[0] - qr.tl[0], qr.tr[1] - qr.tl[1]) / medidas.qr.lado;
+    return Math.hypot(previsto[0] - real[0], previsto[1] - real[1]) / pxQR <= 10;
+  }
+
+  /* O QR decide primeiro: quando a imagem inteira não o revelou, ele ainda pode ser lido no recorte
+   * endireitado. Os traços só decidem quando não há QR legível. Devolve {H, qr} ou null. */
+  function escolherOrientacao(img, ciclos, medidas, qr) {
+    for (const ciclo of ciclos.slice(0, LEITURA.CICLOS_COM_QR)) {
+      for (const H of girosDoCiclo(ciclo, medidas)) {
+        const texto = qr ? (qrNoLugar(H, qr, medidas) ? qr.texto : null) : lerQRRetificado(img, H, medidas);
+        if (texto) return { H, qr: texto };
+      }
+    }
+    if (qr) return null;
     let melhor = null;
     for (const ciclo of ciclos) {
-      for (let k = 0; k < 4; k++) {
-        const [tl, tr, br, bl] = [0, 1, 2, 3].map(i => ciclo[(k + i) % 4]);
-        const H = homografia(medidas.marcadores, [tl, tr, bl, br]);
+      for (const H of girosDoCiclo(ciclo, medidas)) {
         const nota = notaDaOrientacao(img, H, medidas);
         if (!melhor || nota > melhor.nota) melhor = { H, nota };
       }
       if (melhor && melhor.nota >= 0.75) break;
     }
-    return melhor && melhor.nota >= 0.35 ? melhor.H : null;
+    return melhor && melhor.nota >= 0.35 ? { H: melhor.H, qr: null } : null;
   }
 
   /* Segunda chance para o QR: com a folha já alinhada, recorta a área dele e endireita a imagem. */
@@ -906,22 +937,21 @@
     const canal = criarCanal(canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data, w, h);
     const img = { canal, w, h };
     const qr = acharQR(canvas);
-    const achados = acharMarcadores(canal, w, h, qr, medidas);
+    let achados = acharMarcadores(canal, w, h, qr, medidas);
     const base = { w, h, qr: qr ? qr.texto : null, candidatos: achados.candidatos || 0 };
     const tempo = () => Math.round(performance.now() - inicio);
+    let H = achados.pontos ? homografia(medidas.marcadores, achados.pontos) : null;
+    /* Algo escuro na mesa pode passar por quadrado: com o QR fora do lugar, a busca recomeça pela forma. */
+    if (H && !qrNoLugar(H, qr, medidas)) {
+      H = null;
+      achados = acharMarcadores(canal, w, h, null, medidas);
+    }
     if (achados.erro) return Object.assign(base, { erro: achados.erro, ms: tempo() });
-
-    const H = achados.pontos ? homografia(medidas.marcadores, achados.pontos) : escolherOrientacao(img, achados.ciclos, medidas);
-    if (!H) return Object.assign(base, { erro: 'Achei os quadrados pretos, mas não reconheci a folha entre eles.', ms: tempo() });
-    if (!qr) {
-      base.qr = lerQRRetificado(img, H, medidas);
-    } else {
-      const previsto = aplicar(H, medidas.qr.x + medidas.qr.lado / 2, medidas.qr.y + medidas.qr.lado / 2);
-      const real = [(qr.tl[0] + qr.br[0]) / 2, (qr.tl[1] + qr.br[1]) / 2];
-      const pxQR = Math.hypot(qr.tr[0] - qr.tl[0], qr.tr[1] - qr.tl[1]) / medidas.qr.lado;
-      if (Math.hypot(previsto[0] - real[0], previsto[1] - real[1]) / pxQR > 10) {
-        return Object.assign(base, { erro: 'Os 4 quadrados pretos precisam aparecer inteiros na imagem.', ms: tempo() });
-      }
+    if (!H) {
+      const orientada = escolherOrientacao(img, achados.ciclos, medidas, qr);
+      if (!orientada) return Object.assign(base, { erro: FOLHA_NAO_CONFERE, ms: tempo() });
+      H = orientada.H;
+      base.qr = orientada.qr;
     }
 
     const centro = aplicar(H, 106, 150), ao_lado = aplicar(H, 107, 150);
@@ -1728,14 +1758,15 @@
    * imagem pequena. Quando a folha fica parada, lê a imagem em tamanho maior e abre as respostas do aluno.
    * Ao voltar, só lê de novo depois que a folha sair de vista ou for trocada por outra. */
   const CAMERA = {
-    LADO_VERIFICACAO: 640,
+    LADO_VERIFICACAO: LEITURA.LADO_BUSCA,
     LADO_QR: 1100,
     LADO_LEITURA: 2600,
     INTERVALO_MS: 250,
     MOVIMENTO: 0.012,        /* folha "parada": moveu menos que esta fração do maior lado da imagem */
     QUADROS_PARADOS: 2,      /* verificações seguidas na mesma posição antes de ler */
     QUADROS_SEM_FOLHA: 3,    /* verificações sem folha para considerar que ela foi retirada */
-    PAUSA_RECUSA_MS: 700     /* espera antes de tentar de novo quando a leitura é recusada */
+    PAUSA_RECUSA_MS: 700,    /* espera antes de tentar de novo quando a leitura é recusada */
+    PAUSA_ERRO_MS: 3500      /* tempo para ler o motivo quando a folha não foi reconhecida */
   };
   const camera = { fluxo: null, ciclo: null, pubId: null, leitura: null, retirar: false, codigoLido: null };
   const pausa = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -1859,9 +1890,12 @@
     const campo = el('diagnostico');
     campo.hidden = false;
     const { colunas, vf, ...resumo } = leitura;
+    const { num, vf: tabelaVF, qr } = estado.pub.leitura;
+    const trilho = grupo => grupo && [grupo.esq, grupo.dir, grupo.ys[0], grupo.ys[grupo.ys.length - 1]];
     campo.textContent = JSON.stringify(Object.assign(resumo, {
       colunas: (colunas || []).map(coluna => `${coluna.r}: ${coluna.tipo} ${coluna.linhas.map(l => l + 1).join('+')}`),
-      vf: (vf || []).map(item => `${item.r}:${item.valor || '-'}`).join(' ')
+      vf: (vf || []).map(item => `${item.r}:${item.valor || '-'}`).join(' '),
+      publicacao: { publicadaEm: estado.pub.publicadoEm, qr, num: trilho(num), tabelaVF: trilho(tabelaVF) }
     }), null, 1);
     const baixar = document.createElement('a');
     baixar.textContent = 'Baixar esta imagem';
@@ -1884,8 +1918,9 @@
     }
     mostrarDiagnostico(leitura, quadro);
     if (leitura.erro || leitura.recusa.length) {
-      mostrarEstadoCamera(leitura.erro ? 'Coloque a folha inteira na imagem, com os 4 quadrados visíveis.' : 'Tire a mão ou a sombra da folha e aguarde.', 'atencao');
-      await pausa(CAMERA.PAUSA_RECUSA_MS);
+      const pequena = !leitura.erro && leitura.recusa.includes('a folha ficou pequena na imagem');
+      mostrarEstadoCamera(leitura.erro || (pequena ? 'Aproxime a folha da câmera.' : 'Tire a mão ou a sombra da folha e aguarde.'), 'atencao');
+      await pausa(leitura.erro ? CAMERA.PAUSA_ERRO_MS : CAMERA.PAUSA_RECUSA_MS);
       return;
     }
     pararEspera();
