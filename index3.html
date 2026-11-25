@@ -1,0 +1,2338 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Consulta da prova</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  /* Página dos alunos no tablet, publicada no GitHub Pages: dentro do iframe do GAS a câmera não abre. */
+  :root {
+    color-scheme: light;
+    --verde: #12683c; --verde-2: #18864e; --verde-claro: #e5f3e9; --texto: #183128; --texto-2: #4a6355;
+    --borda: #c4d7ca; --fundo: #f2f7f3; --amarelo: #fff59a; --certo: #b5e9c4; --certo-txt: #075f2d;
+    --errado: #f5bfc1; --errado-txt: #84262b; --cinza: #87958c;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* overscroll-behavior impede que a rolagem "vaze" para a página do Google e dispare o
+     puxar-para-atualizar do navegador (que recarregava a consulta sem querer). */
+  html, body { margin: 0; height: 100%; overscroll-behavior: none; }
+  body {
+    background: linear-gradient(145deg, #eef6f0 0%, #f9fbfc 50%, #eef2f7 100%);
+    color: var(--texto); font: 17px/1.45 Arial, Helvetica, sans-serif;
+    touch-action: manipulation; -webkit-user-select: none; user-select: none; overscroll-behavior: none;
+  }
+  button { font: inherit; touch-action: manipulation; cursor: pointer; }
+  [hidden] { display: none !important; }
+
+  .topo {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 14px clamp(14px, 3vw, 28px); color: #fff;
+    background: linear-gradient(120deg, var(--verde), var(--verde-2) 60%, #33a267);
+    box-shadow: 0 6px 18px #174c2b30; position: sticky; top: 0; z-index: 5;
+  }
+  .topo h1 { flex: 1 1 auto; min-width: 0; margin: 0; font-size: clamp(1.1rem, 3.2vw, 1.6rem); letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .topo .sair { min-height: 48px; padding: 0 20px; border: 2px solid #ffffffa0; border-radius: 12px; background: #ffffff1f; color: #fff; font-weight: 700; }
+  .zoom { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+  .zoom button { min-width: 52px; min-height: 48px; padding: 0 10px; border: 2px solid #ffffffa0; border-radius: 12px; background: #ffffff1f; color: #fff; font-weight: 800; font-size: 1.2rem; }
+  .zoom #btnZoomPadrao { min-width: 72px; font-size: .95rem; }
+  .zoom button:disabled { opacity: .4; cursor: default; }
+
+  /* O zoom (botões A− / A+) amplia só o conteúdo; cabeçalho e barra de ações ficam do mesmo tamanho. */
+  main { zoom: var(--zoom, 1); max-width: 1280px; margin: 0 auto; padding: clamp(14px, 3vw, 28px); padding-bottom: 130px; }
+  .tela h2 { margin: 6px 0 14px; font-size: 1.3rem; color: #17633b; }
+  .aviso { padding: 12px 16px; border-radius: 12px; background: #fff7d6; border: 1px solid #f0d37a; color: #6b5310; margin-bottom: 14px; }
+
+  .lista-provas { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .cartao-prova {
+    display: grid; gap: 6px; text-align: left; min-height: 96px; padding: 18px 20px;
+    border: 1px solid #cfe3d6; border-radius: 16px; background: #fff; color: var(--texto);
+    box-shadow: 0 7px 18px #1f38210f;
+  }
+  .cartao-prova strong { font-size: 1.12rem; color: #12592f; }
+  .cartao-prova span { color: var(--texto-2); font-size: .95rem; }
+  .cartao-prova:active { transform: scale(.985); background: var(--verde-claro); }
+  .vazio { padding: 28px; text-align: center; color: var(--texto-2); background: #fff; border-radius: 16px; border: 1px dashed var(--borda); }
+
+  .botao { min-height: 56px; padding: 0 26px; border-radius: 14px; border: 0; font-weight: 800; letter-spacing: .02em; }
+  .primario { color: #fff; background: linear-gradient(120deg, #11633a, #218d51); box-shadow: 0 7px 14px #176e3a36; }
+  .secundario { color: var(--verde); background: #fff; border: 2px solid #9cc9ad; }
+  .perigo { color: #fff; background: linear-gradient(120deg, #9a2f2f, #c0392b); }
+  .botao:disabled { color: #fff; background: var(--cinza); border-color: var(--cinza); box-shadow: none; cursor: not-allowed; }
+  .linha-botoes { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 18px; }
+  .linha-botoes .botao { flex: 1 1 180px; max-width: 320px; }
+
+  .centro { max-width: 520px; margin: 0 auto; text-align: center; }
+  .visor-codigo { display: flex; gap: 10px; justify-content: center; margin: 18px 0; }
+  .visor-codigo span {
+    width: 52px; height: 64px; display: grid; place-items: center; font-size: 2rem; font-weight: 800;
+    border: 2px solid var(--borda); border-radius: 12px; background: #fff;
+  }
+  .visor-codigo span.cheio { border-color: var(--verde-2); background: var(--verde-claro); }
+  .teclado { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 360px; margin: 0 auto; }
+  .teclado button {
+    min-height: 68px; border: 1px solid #cfe3d6; border-radius: 14px; background: #fff; color: var(--texto);
+    font-size: 1.7rem; font-weight: 700; box-shadow: 0 3px 8px #1f382112;
+  }
+  .teclado button:active { background: var(--verde-claro); transform: scale(.97); }
+  .teclado button.tecla-acao { font-size: 1.05rem; color: var(--texto-2); }
+  .teclado button.largo { grid-column: 1 / -1; min-height: 52px; }
+  .erro { min-height: 26px; color: #9a2f2f; font-weight: 700; margin: 12px 0 0; }
+  .grande { font-size: 1.35rem; }
+
+  .faixa-aluno {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 14px 18px; background: #fff; border: 1px solid #dce8e0; border-radius: 16px; margin-bottom: 12px;
+  }
+  .faixa-aluno strong { font-size: 1.15rem; }
+  .chip { padding: 6px 14px; border-radius: 999px; background: var(--verde-claro); color: #17482d; font-weight: 700; font-size: .95rem; }
+  .chip.entregue { background: #f7d9d9; color: #8a2a2a; }
+  .instrucao { margin: 0 0 14px; color: var(--texto-2); }
+
+  .tabelas { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+  .cartao-tabela { max-width: 100%; padding: 14px; background: #fff; border: 1px solid #dce8e0; border-radius: 16px; box-shadow: 0 7px 18px #1f38210d; }
+  .cartao-tabela.num { flex: 1 1 520px; }
+  .cartao-tabela h3 { margin: 0 0 10px; color: #17633b; font-size: 1.05rem; }
+  .rolagem { overflow: auto; overscroll-behavior: contain; max-height: var(--altura-tabela, 62vh); -webkit-overflow-scrolling: touch; border: 1px solid var(--borda); border-radius: 10px; }
+  table { border-collapse: separate; border-spacing: 0; }
+  th, td { border-right: 1px solid #d0dfd4; border-bottom: 1px solid #d0dfd4; text-align: center; }
+  thead th { position: sticky; top: 0; z-index: 2; background: var(--verde-claro); color: #17482d; padding: 8px 6px; font-size: .9rem; min-width: 56px; }
+  thead th.col-par { background: #d6eadc; }
+  th.fixa { position: sticky; left: 0; z-index: 1; background: #f4f8f5; color: #355544; text-align: right; padding: 6px 10px; white-space: nowrap; font-weight: 700; }
+  thead th.fixa { z-index: 3; background: #dcefe2; }
+  th.fixa small { display: block; font-size: .72rem; font-weight: 400; color: var(--texto-2); }
+  td.celula { min-width: 56px; height: 52px; background: #fff; font-weight: 800; font-size: 1.05rem; cursor: pointer; }
+  td.celula.col-par { background: #f1f8f3; }
+  td.celula:active { background: #dcefe2; }
+  td.vazia { background: #fafafa; }
+  td.celula.marcada { background: var(--amarelo); color: #0c5f31; }
+  td.correta { background: var(--certo) !important; color: var(--certo-txt); }
+  td.incorreta { background: var(--errado) !important; color: var(--errado-txt); }
+  .bloqueada td.celula { cursor: default; }
+  .tabela-vf td.celula { min-width: 80px; }
+  .linha-nda td.celula { font-size: .9rem; }
+
+  .resultado { margin: 16px 0 0; padding: 0; font-weight: 700; color: var(--texto); min-height: 24px; scroll-margin-top: 90px; }
+  .resultado.erro-msg { color: #9a2f2f; }
+  .resultado.ok-msg { padding: 12px 16px; border-radius: 12px; background: #e9f7ee; border: 1px solid #b9e2c7; }
+
+  /* Resumo do feedback: um bloco para o gabarito numérico e outro para o V/F */
+  .feedback { display: grid; gap: 12px; padding: 14px; border-radius: 14px; background: #eef7f1; border: 1px solid #b9e2c7; font-weight: 400; }
+  .feedback-topo { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; color: var(--verde); font-size: 1.15rem; font-weight: 800; }
+  .feedback-restam { padding: 4px 12px; border-radius: 999px; background: #fff; border: 1px solid #b9e2c7; font-size: .95rem; }
+  .blocos-feedback { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+  .bloco-feedback { padding: 14px; border-radius: 12px; background: #fff; border: 1px solid var(--borda); border-top: 5px solid var(--verde-2); }
+  .bloco-feedback.vf { border-top-color: #3b6fb5; }
+  .bloco-feedback h3 { margin: 0 0 10px; font-size: 1.05rem; }
+  .contagens { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .contagem { display: grid; justify-items: center; padding: 8px 4px; border-radius: 10px; font-size: .86rem; font-weight: 700; text-align: center; line-height: 1.2; }
+  .contagem strong { font-size: 1.7rem; line-height: 1.1; }
+  .contagem.certo { background: var(--certo); color: var(--certo-txt); }
+  .contagem.errado { background: var(--errado); color: var(--errado-txt); }
+  .contagem.branco { background: #e6ebef; color: #46565f; }
+  .legenda-feedback { margin: 10px 0 0; color: var(--texto-2); font-size: .92rem; }
+  .sem-marcacao { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 0; font-size: .92rem; font-weight: 700; }
+  .rotulo-quesito { padding: 2px 8px; border-radius: 8px; background: #fff3da; border: 1px solid #f2b35a; color: #7a4a00; }
+
+  .barra-acoes {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
+    padding: 12px clamp(12px, 3vw, 28px) calc(12px + env(safe-area-inset-bottom));
+    background: #ffffffee; border-top: 1px solid #dce8e0; box-shadow: 0 -6px 18px #1f382112;
+  }
+  .barra-acoes .botao { flex: 1 1 220px; max-width: 360px; }
+
+  .modal { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(10, 30, 18, .5); }
+  .modal .caixa { zoom: var(--zoom-modal, 1); width: min(460px, 100%); max-height: 92vh; overflow: auto; overscroll-behavior: contain; padding: 22px; border-radius: 18px; background: #fff; box-shadow: 0 18px 40px rgba(0,0,0,.3); }
+  .modal h3 { margin: 0 0 10px; font-size: 1.25rem; color: #17633b; }
+  .modal p { margin: 0 0 8px; }
+  .visor-valor {
+    min-height: 64px; margin: 12px 0; padding: 8px 14px; display: flex; align-items: center; justify-content: flex-end;
+    font-size: 2rem; font-weight: 800; border: 2px solid var(--borda); border-radius: 12px; background: #f9fcfa; word-break: break-all;
+  }
+  .visor-valor.vazio-valor { color: #a5b3aa; font-size: 1.1rem; font-weight: 400; justify-content: center; }
+  .nota-grande { font-size: 2.4rem; font-weight: 800; color: var(--verde); text-align: center; margin: 4px 0 2px; }
+  .nota-legenda { text-align: center; color: var(--texto-2); font-size: .9rem; margin: 0 0 12px; }
+  .notas-questoes { margin: 0; padding: 0; list-style: none; border: 1px solid var(--borda); border-radius: 12px; overflow: hidden; }
+  .notas-questoes li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 12px; border-bottom: 1px solid #e3ece6; }
+  .notas-questoes li:last-child { border-bottom: 0; }
+  .notas-questoes li:nth-child(even) { background: #f6faf7; }
+  .notas-questoes strong { color: var(--verde); white-space: nowrap; }
+
+  .carregando { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; gap: 14px; background: rgba(255,255,255,.75); font-weight: 700; color: var(--verde); }
+  .spinner { width: 34px; height: 34px; border: 4px solid #cfe3d6; border-top-color: var(--verde-2); border-radius: 50%; animation: girar 0.9s linear infinite; }
+  @keyframes girar { to { transform: rotate(360deg); } }
+
+  .tela-cheia {
+    position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; padding: 24px;
+    background: linear-gradient(140deg, var(--verde), var(--verde-2) 60%, #33a267); color: #fff; text-align: center;
+  }
+  .tela-cheia .conteudo { max-width: 520px; }
+  .tela-cheia h2 { margin: 0 0 12px; font-size: clamp(1.6rem, 5vw, 2.3rem); }
+  .tela-cheia p { margin: 0 0 26px; font-size: 1.15rem; color: #e2f8e9; }
+  .tela-cheia button { min-height: 72px; padding: 0 36px; border: 0; border-radius: 18px; background: #fff; color: var(--verde); font-size: 1.3rem; font-weight: 800; box-shadow: 0 10px 24px #0b3a2040; }
+  .tela-cheia button:active { transform: scale(.98); }
+  @media (max-width: 640px) { .visor-codigo span { width: 44px; height: 56px; } }
+
+  /* Habilitação do tablet pelo professor */
+  .texto-habilitar { max-width: 560px; margin: 0 auto 22px; text-align: center; color: var(--texto-2); }
+  .botao-google { display: flex; justify-content: center; min-height: 44px; }
+
+  /* Escolha do modo e leitura pela câmera */
+  .opcoes-modo { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); max-width: 900px; margin: 0 auto; }
+  .cartao-modo {
+    display: grid; gap: 8px; min-height: 150px; padding: 24px; text-align: left; align-content: center;
+    border: 2px solid #cfe3d6; border-radius: 18px; background: #fff; color: var(--texto); box-shadow: 0 7px 18px #1f38210f;
+  }
+  .cartao-modo strong { font-size: 1.3rem; color: #12592f; }
+  .cartao-modo span { color: var(--texto-2); }
+  .cartao-modo:active { transform: scale(.985); background: var(--verde-claro); }
+  .quadro-camera { position: relative; max-width: 720px; margin: 0 auto; }
+  .quadro-camera video { display: block; width: 100%; max-height: 62vh; background: #111; border-radius: 14px; }
+  .estado-camera { max-width: 720px; margin: 14px auto 0; padding: 14px 18px; border-radius: 14px; background: #e9eef6; color: #23405f; font-size: 1.25rem; font-weight: 800; text-align: center; }
+  .estado-camera.ok { background: #d9f2e3; color: #0f6b38; }
+  .estado-camera.atencao { background: #fff3da; color: #7a5b00; }
+  .aviso-leitura { margin: 0 0 12px; padding: 12px 16px; border-radius: 12px; background: #fff0d6; border: 1px solid #f2b35a; color: #7a4a00; font-weight: 700; }
+  td.duvida { box-shadow: inset 0 0 0 3px #f28c28; }
+  /* Correção em massa: o cartão cobre a imagem para ser lido de longe, com o aparelho no suporte. */
+  .em-massa .quadro-camera { min-height: min(62vh, 420px); border-radius: 14px; background: #111; }
+  .em-massa .faixa-aluno { max-width: 720px; margin-left: auto; margin-right: auto; }
+  .cartao-massa { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 16px; overflow: auto; border-radius: 14px; text-align: center; }
+  .cartao-massa p { margin: 0; overflow-wrap: anywhere; }
+  .cartao-massa .linha-botoes { width: 100%; margin-top: 12px; }
+  .cartao-massa.ok { background: #d9f2e3f5; color: #0f6b38; }
+  .cartao-massa.atencao { background: #fff3daf8; color: #7a5b00; }
+  .cartao-massa.falha { background: #f7d9d9f8; color: #8a2a2a; }
+  .massa-titulo { font-size: 1.25rem; font-weight: 800; }
+  .massa-nome { font-size: clamp(1.35rem, 5vw, 1.9rem); font-weight: 800; color: var(--texto); }
+  .massa-nota { font-size: clamp(2.4rem, 11vw, 4.5rem); font-weight: 800; line-height: 1.15; }
+  .massa-texto { font-size: 1.15rem; font-weight: 700; }
+  .diagnostico { max-width: 720px; margin: 12px auto 0; padding: 10px; border-radius: 10px; background: #fff; border: 1px solid #dce8e0; font: 12px/1.35 Consolas, monospace; white-space: pre-wrap; word-break: break-word; -webkit-user-select: text; user-select: text; }
+</style>
+</head>
+<body>
+  <header class="topo">
+    <h1>Consulta da prova</h1>
+    <div class="zoom" role="group" aria-label="Tamanho do conteúdo">
+      <button id="btnZoomMenos" type="button" aria-label="Diminuir o tamanho">A−</button>
+      <button id="btnZoomPadrao" type="button" aria-label="Voltar ao tamanho padrão">100%</button>
+      <button id="btnZoomMais" type="button" aria-label="Aumentar o tamanho">A+</button>
+    </div>
+    <button id="btnSair" class="sair" type="button" hidden>Sair</button>
+  </header>
+
+  <main>
+    <section id="telaHabilitar" class="tela" hidden>
+      <div id="avisoHabilitar" class="aviso" hidden></div>
+      <h2 style="text-align: center">Habilitar este tablet</h2>
+      <p class="texto-habilitar">O professor entra com a conta Google uma vez. O tablet fica habilitado por 8 horas.</p>
+      <div id="botaoGoogle" class="botao-google"></div>
+    </section>
+
+    <section id="telaSairDaConta" class="tela" hidden>
+      <h2 style="text-align: center">Tablet habilitado</h2>
+      <p class="texto-habilitar">Saia da sua conta Google antes de entregar o tablet aos alunos. A consulta continua funcionando sem ela. Depois, feche a aba do Google e volte para cá.</p>
+      <div class="linha-botoes">
+        <button id="btnSairDaConta" class="botao primario" type="button">Sair da conta Google</button>
+        <button id="btnContinuar" class="botao secundario" type="button" disabled>Continuar</button>
+      </div>
+      <p class="texto-habilitar" style="margin-top: 26px">Se o aparelho vai ficar com você, pode ir direto à correção em massa, sem sair da conta. Nesse caso, saia dela antes de entregar o aparelho aos alunos.</p>
+      <div class="linha-botoes"><button id="btnMassaDireto" class="botao secundario" type="button">Correção em massa</button></div>
+    </section>
+
+    <section id="telaModo" class="tela" hidden>
+      <h2 style="text-align: center">Como esta consulta vai funcionar?</h2>
+      <div class="opcoes-modo">
+        <button id="btnModoManual" class="cartao-modo" type="button">
+          <strong>Modo manual</strong>
+          <span>O aluno digita o código e marca as respostas na tela.</span>
+        </button>
+        <button id="btnModoCamera" class="cartao-modo" type="button">
+          <strong>Leitura automática</strong>
+          <span>O tablet fica no suporte, a câmera lê a folha e o aluno só confere e envia.</span>
+        </button>
+        <button id="btnModoMassa" class="cartao-modo" type="button">
+          <strong>Correção em massa</strong>
+          <span>Para o professor: o aparelho fica no suporte e cada folha colocada é lida e salva sozinha.</span>
+        </button>
+      </div>
+    </section>
+
+    <section id="telaCamera" class="tela" hidden>
+      <div id="faixaMassa" class="faixa-aluno" hidden><strong id="provaMassa"></strong><span id="contagemMassa" class="chip"></span></div>
+      <div id="avisoCamera" class="aviso" hidden></div>
+      <div class="quadro-camera">
+        <video id="video" autoplay playsinline muted></video>
+        <div id="cartaoMassa" class="cartao-massa" hidden aria-live="polite"></div>
+      </div>
+      <p id="estadoCamera" class="estado-camera" aria-live="polite">Abrindo a câmera…</p>
+      <div class="linha-botoes">
+        <button id="btnDigitarCodigo" class="botao secundario" type="button">Digitar o código</button>
+        <button id="btnTrocarModo" class="botao secundario" type="button">Trocar de modo</button>
+      </div>
+      <pre id="diagnostico" class="diagnostico" hidden></pre>
+    </section>
+
+    <section id="telaProvas" class="tela" hidden>
+      <div id="avisoProvas" class="aviso" hidden></div>
+      <h2>Qual é a sua prova?</h2>
+      <div id="listaProvas" class="lista-provas"></div>
+      <div class="linha-botoes"><button id="btnAtualizarLista" class="botao secundario" type="button">Atualizar lista</button></div>
+    </section>
+
+    <section id="telaCodigo" class="tela centro" hidden>
+      <div id="avisoCodigo" class="aviso" hidden></div>
+      <h2 id="tituloCodigo"></h2>
+      <p>Digite o <strong>código de 6 dígitos</strong> impresso na sua prova.</p>
+      <div id="visorCodigo" class="visor-codigo" aria-live="polite"></div>
+      <div id="tecladoCodigo" class="teclado"></div>
+      <p id="erroCodigo" class="erro" aria-live="polite"></p>
+      <div class="linha-botoes">
+        <button id="btnVoltarProvas" class="botao secundario" type="button">Voltar</button>
+        <button id="btnEntrar" class="botao primario" type="button" disabled>Entrar</button>
+      </div>
+    </section>
+
+    <section id="telaConfirmar" class="tela centro" hidden>
+      <h2>Confirme que é você</h2>
+      <p class="grande">Você é <strong id="nomeConfirmar"></strong>?</p>
+      <div class="linha-botoes">
+        <button id="btnNaoSouEu" class="botao secundario" type="button">Não, voltar</button>
+        <button id="btnSouEu" class="botao primario" type="button">Sim, sou eu</button>
+      </div>
+    </section>
+
+    <section id="telaRespostas" class="tela" hidden>
+      <div class="faixa-aluno"><strong id="nomeAluno"></strong><span id="statusFeedback" class="chip"></span></div>
+      <p id="avisoLeitura" class="aviso-leitura" hidden></p>
+      <p class="instrucao">Toque nas células para marcar <strong>exatamente o que está na folha</strong>. Toque de novo para desmarcar.</p>
+      <div id="tabelas" class="tabelas"></div>
+      <div id="resultado" class="resultado" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <div id="barraAcoes" class="barra-acoes" hidden>
+    <button id="btnFeedback" class="botao secundario" type="button">Pedir feedback</button>
+    <button id="btnEntregar" class="botao primario" type="button">Entregar a prova</button>
+    <button id="btnVerNota" class="botao secundario" type="button" hidden>Ver minha nota</button>
+    <button id="btnConcluir" class="botao primario" type="button" hidden>Concluir</button>
+  </div>
+
+  <div id="modal" class="modal" hidden>
+    <div class="caixa" role="dialog" aria-modal="true" aria-labelledby="modalTitulo">
+      <h3 id="modalTitulo"></h3>
+      <div id="modalCorpo"></div>
+      <div id="modalBotoes" class="linha-botoes"></div>
+    </div>
+  </div>
+
+  <div id="telaCheia" class="tela-cheia" hidden>
+    <div class="conteudo">
+      <h2>Consulta da prova</h2>
+      <p id="telaCheiaTexto">Toque no botão para abrir a consulta em tela cheia.</p>
+      <button id="btnTelaCheia" type="button">Abrir em tela cheia</button>
+    </div>
+  </div>
+
+  <div id="carregando" class="carregando" hidden><span class="spinner" aria-hidden="true"></span><span id="carregandoTexto">Carregando...</span></div>
+
+<script>
+  /* ============================ LEITURA DA FOLHA PELA CÂMERA ============================
+   * Recebe uma imagem e as medidas do gabarito impresso (geradas pela aba de impressão e guardadas
+   * na publicação) e devolve o que está marcado em cada quesito. A imagem não sai do aparelho.
+   * Medidas em mm, com a origem no canto da folha:
+   *   marcadores: centros dos 4 quadrados pretos [topo esq., topo dir., base esq., base dir.]
+   *   num / vf: tabelas, com as colunas de traços (esq, dir, ys) e a posição de cada célula
+   * Os traços acompanham a folha ondulada: a posição de cada célula é corrigida pelo desvio deles. */
+  const LEITURA = {
+    MARCA: 0.14,       /* contraste líquido mínimo com as células vizinhas para contar como marcada */
+    DUVIDA: 0.09,      /* entre este valor e MARCA, a célula fica em dúvida (sem marcar por padrão) */
+    SEGUNDA: 0.38,     /* a 2ª marca forte da coluna conta como dupla a partir desta fração da 1ª */
+    BORRAO: 0.24,      /* parte do contraste da vizinha imediata descontada para ignorar invasão de borda */
+    RUIDO: 2.1,        /* múltiplo da variação entre células vazias vizinhas descontado contra baixa luz */
+    GANHO_MEDIA: 1.35, /* peso do escurecimento médio da célula frente aos ladrilhos mais escuros */
+    SUAVE_MM: 0.25,    /* raio da suavização da imagem antes da leitura das células */
+    NDA: 0.14,         /* contraste líquido mínimo na célula N.D.A. */
+    MIN_PX_MM: 3.2,    /* abaixo disto a folha está pequena demais na foto para uma leitura segura */
+    LADO_BUSCA: 640,   /* maior lado da imagem pequena em que a folha é procurada */
+    CICLOS_COM_QR: 12  /* quantos retângulos de quadrados têm o QR conferido nos quatro giros */
+  };
+  const FOLHA_NAO_CONFERE = 'Esta folha não confere com a prova aberta no tablet. Confira a prova escolhida ou publique a prova de novo, depois de gerar as folhas.';
+
+  function criarCanal(rgba, w, h) {
+    /* Brilho da imagem: caneta de qualquer cor escurece, e um tom de luz ou de tela pesa pouco. */
+    const canal = new Uint8Array(w * h);
+    for (let i = 0, j = 0; i < canal.length; i++, j += 4) {
+      canal[i] = rgba[j] * 0.3 + rgba[j + 1] * 0.59 + rgba[j + 2] * 0.11;
+    }
+    return canal;
+  }
+
+  /* Média em uma janela pequena: apaga linhas finas e granulado sem apagar traços de caneta.
+   * Devolve Float32Array para não perder precisão em degraus inteiros sob baixa iluminação. */
+  function suavizar(canal, w, h, raio) {
+    const lado = 2 * raio + 1;
+    const meio = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const base = y * w;
+      let soma = canal[base] * (raio + 1);
+      for (let d = 1; d <= raio; d++) soma += canal[base + Math.min(d, w - 1)];
+      for (let x = 0; x < w; x++) {
+        meio[base + x] = soma / lado;
+        soma += canal[base + Math.min(x + raio + 1, w - 1)] - canal[base + Math.max(x - raio, 0)];
+      }
+    }
+    const saida = new Float32Array(w * h);
+    for (let x = 0; x < w; x++) {
+      let soma = meio[x] * (raio + 1);
+      for (let d = 1; d <= raio; d++) soma += meio[Math.min(d, h - 1) * w + x];
+      for (let y = 0; y < h; y++) {
+        saida[y * w + x] = soma / lado;
+        soma += meio[Math.min(y + raio + 1, h - 1) * w + x] - meio[Math.max(y - raio, 0) * w + x];
+      }
+    }
+    return saida;
+  }
+
+  function reduzir(canal, w, h, fator) {
+    const rw = Math.floor(w / fator), rh = Math.floor(h / fator);
+    const saida = new Uint8Array(rw * rh);
+    const area = fator * fator;
+    for (let y = 0; y < rh; y++) {
+      for (let x = 0; x < rw; x++) {
+        let soma = 0;
+        for (let j = 0; j < fator; j++) {
+          const base = (y * fator + j) * w + x * fator;
+          for (let i = 0; i < fator; i++) soma += canal[base + i];
+        }
+        saida[y * rw + x] = soma / area;
+      }
+    }
+    return { dados: saida, w: rw, h: rh };
+  }
+
+  function acharQR(canvas) {
+    if (typeof jsQR !== 'function') return null;
+    const maior = Math.max(canvas.width, canvas.height);
+    const escalas = maior > 1500 ? [1400 / maior, Math.min(1, 2200 / maior)] : [1];
+    for (const escala of escalas) {
+      const w = Math.round(canvas.width * escala), h = Math.round(canvas.height * escala);
+      const copia = document.createElement('canvas');
+      copia.width = w; copia.height = h;
+      const ctx = copia.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(canvas, 0, 0, w, h);
+      const achado = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+      if (achado && achado.data) {
+        const c = achado.location;
+        const voltar = ponto => [ponto.x / escala, ponto.y / escala];
+        return { texto: achado.data, tl: voltar(c.topLeftCorner), tr: voltar(c.topRightCorner), bl: voltar(c.bottomLeftCorner), br: voltar(c.bottomRightCorner) };
+      }
+    }
+    return null;
+  }
+
+  function binarizar(img, janela, fator) {
+    const { dados, w, h } = img;
+    const integral = new Uint32Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) {
+      let linha = 0;
+      for (let x = 0; x < w; x++) {
+        linha += dados[y * w + x];
+        integral[(y + 1) * (w + 1) + x + 1] = integral[y * (w + 1) + x + 1] + linha;
+      }
+    }
+    const bin = new Uint8Array(w * h);
+    const meia = Math.max(3, Math.floor(janela / 2));
+    for (let y = 0; y < h; y++) {
+      const y0 = Math.max(0, y - meia), y1 = Math.min(h, y + meia + 1);
+      for (let x = 0; x < w; x++) {
+        const x0 = Math.max(0, x - meia), x1 = Math.min(w, x + meia + 1);
+        const soma = integral[y1 * (w + 1) + x1] - integral[y0 * (w + 1) + x1] - integral[y1 * (w + 1) + x0] + integral[y0 * (w + 1) + x0];
+        if (dados[y * w + x] < soma / ((x1 - x0) * (y1 - y0)) * fator) bin[y * w + x] = 1;
+      }
+    }
+    return bin;
+  }
+
+  function componentes(bin, w, h) {
+    const visitado = new Uint8Array(w * h);
+    const pilha = new Int32Array(w * h);
+    const blocos = [];
+    for (let inicio = 0; inicio < bin.length; inicio++) {
+      if (!bin[inicio] || visitado[inicio]) continue;
+      let topo = 0, area = 0, somaX = 0, somaY = 0;
+      let minX = w, maxX = 0, minY = h, maxY = 0;
+      pilha[topo++] = inicio;
+      visitado[inicio] = 1;
+      while (topo) {
+        const i = pilha[--topo];
+        const x = i % w, y = (i - x) / w;
+        area++; somaX += x; somaY += y;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        if (x > 0 && bin[i - 1] && !visitado[i - 1]) { visitado[i - 1] = 1; pilha[topo++] = i - 1; }
+        if (x < w - 1 && bin[i + 1] && !visitado[i + 1]) { visitado[i + 1] = 1; pilha[topo++] = i + 1; }
+        if (y > 0 && bin[i - w] && !visitado[i - w]) { visitado[i - w] = 1; pilha[topo++] = i - w; }
+        if (y < h - 1 && bin[i + w] && !visitado[i + w]) { visitado[i + w] = 1; pilha[topo++] = i + w; }
+      }
+      if (area >= 16) blocos.push({ area, x: somaX / area, y: somaY / area, minX, maxX, minY, maxY });
+    }
+    return blocos;
+  }
+
+  function quadradoNaImagem(img, b) {
+    const l = b.maxX - b.minX + 1, a = b.maxY - b.minY + 1;
+    const naBorda = b.minX === 0 || b.minY === 0 || b.maxX === img.w - 1 || b.maxY === img.h - 1;
+    return !naBorda && l / a > 0.6 && l / a < 1.66 && b.area / (l * a) > 0.65;
+  }
+
+  /* Com o QR lido, sua posição dá a escala e a orientação da folha. */
+  function marcadoresPeloQR(img, qr, fator, medidas) {
+    const ladoEsperado = Math.hypot(qr.tr[0] - qr.tl[0], qr.tr[1] - qr.tl[1]) / fator / medidas.qr.lado * medidas.marcador;
+    const area0 = ladoEsperado * ladoEsperado;
+    const candidatos = componentes(binarizar(img, ladoEsperado * 3.2, 0.72), img.w, img.h)
+      .filter(b => quadradoNaImagem(img, b) && b.area > area0 * 0.5 && b.area < area0 * 2.8);
+    if (candidatos.length < 4) return null;
+    const ex = [qr.tr[0] - qr.tl[0], qr.tr[1] - qr.tl[1]], ey = [qr.bl[0] - qr.tl[0], qr.bl[1] - qr.tl[1]];
+    const nx = Math.hypot(ex[0], ex[1]), ny = Math.hypot(ey[0], ey[1]);
+    const noEixo = b => [(b.x * ex[0] + b.y * ex[1]) / nx, (b.x * ey[0] + b.y * ey[1]) / ny];
+    const melhor = pontuacao => candidatos.reduce((a, b) => (pontuacao(noEixo(b)) > pontuacao(noEixo(a)) ? b : a));
+    const cantos = [melhor(p => -p[0] - p[1]), melhor(p => p[0] - p[1]), melhor(p => -p[0] + p[1]), melhor(p => p[0] + p[1])];
+    return new Set(cantos).size === 4 ? cantos : null;
+  }
+
+  /* Sem o QR: procura, em qualquer tamanho, quatro quadrados que formem o retângulo dos marcadores. */
+  function marcadoresPelaForma(img, medidas, janelas) {
+    const maior = Math.max(img.w, img.h);
+    const [tl, tr, bl] = medidas.marcadores;
+    const largura = Math.hypot(tr[0] - tl[0], tr[1] - tl[1]), altura = Math.hypot(bl[0] - tl[0], bl[1] - tl[1]);
+    const razaoMaxima = Math.max(largura, altura) / Math.min(largura, altura) * 1.45;
+    const proporcaoEsperada = medidas.marcador / Math.max(largura, altura);
+    const quadrados = [];
+    (janelas || [maior / 40, maior / 20, maior / 10]).forEach(janela => {
+      componentes(binarizar(img, janela, 0.72), img.w, img.h).forEach(b => {
+        const repetido = quadrados.some(q => Math.hypot(q.x - b.x, q.y - b.y) < Math.sqrt(q.area) / 2);
+        if (!repetido && quadradoNaImagem(img, b) && b.area >= 25 && Math.sqrt(b.area) < maior / 8) quadrados.push(b);
+      });
+    });
+    const lista = quadrados.sort((a, b) => b.area - a.area).slice(0, 14);
+    const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    const quadros = [];
+    for (let a = 0; a < lista.length; a++) {
+      for (let b = a + 1; b < lista.length; b++) {
+        for (let c = b + 1; c < lista.length; c++) {
+          for (let d = c + 1; d < lista.length; d++) {
+            const grupo = [lista[a], lista[b], lista[c], lista[d]];
+            const cx = grupo.reduce((s, q) => s + q.x, 0) / 4, cy = grupo.reduce((s, q) => s + q.y, 0) / 4;
+            const ciclo = grupo.slice().sort((p, q) => Math.atan2(p.y - cy, p.x - cx) - Math.atan2(q.y - cy, q.x - cx));
+            const lados = ciclo.map((p, i) => dist(p, ciclo[(i + 1) % 4]));
+            const parecidos = (u, v) => Math.min(u, v) / Math.max(u, v) >= 0.55;
+            if (!parecidos(lados[0], lados[2]) || !parecidos(lados[1], lados[3])) continue;
+            const longo = Math.max(lados[0] + lados[2], lados[1] + lados[3]) / 2, curto = Math.min(lados[0] + lados[2], lados[1] + lados[3]) / 2;
+            if (longo / curto > razaoMaxima) continue;
+            const areas = grupo.map(q => q.area);
+            if (Math.min(...areas) / Math.max(...areas) < 0.3) continue;
+            const proporcao = Math.sqrt(areas.reduce((s, v) => s + v, 0) / 4) / longo;
+            if (proporcao < proporcaoEsperada * 0.45 || proporcao > proporcaoEsperada * 1.9) continue;
+            let areaQuadro = 0, convexo = true, sinal = 0;
+            ciclo.forEach((p, i) => {
+              const q = ciclo[(i + 1) % 4], r = ciclo[(i + 2) % 4];
+              areaQuadro += p.x * q.y - q.x * p.y;
+              const giro = (q.x - p.x) * (r.y - q.y) - (q.y - p.y) * (r.x - q.x);
+              if (sinal && Math.sign(giro) !== sinal) convexo = false;
+              sinal = Math.sign(giro);
+            });
+            if (convexo) quadros.push({ ciclo, area: Math.abs(areaQuadro) / 2 });
+          }
+        }
+      }
+    }
+    /* Objetos escuros na mesa podem formar um retângulo maior que o da folha: vários são testados depois. */
+    const ciclos = quadros.sort((p, q) => q.area - p.area).slice(0, 40).map(quadro => quadro.ciclo);
+    return { ciclos, candidatos: lista.length };
+  }
+
+  /* Devolve {pontos: [topo esq., topo dir., base esq., base dir.]} quando a orientação já é conhecida,
+   * ou {ciclos}: retângulos candidatos, para a folha e a orientação serem descobertas pelos traços. */
+  function acharMarcadores(canal, w, h, qr, medidas) {
+    const fator = Math.max(1, Math.round(Math.max(w, h) / 1300));
+    const img = reduzir(canal, w, h, fator);
+    const emPixels = (pontos, escala) => pontos.map(b => [(b.x + 0.5) * escala, (b.y + 0.5) * escala]);
+    const peloQR = qr ? marcadoresPeloQR(img, qr, fator, medidas) : null;
+    if (peloQR) return { pontos: emPixels(peloQR, fator), candidatos: 4 };
+    const pelaForma = marcadoresPelaForma(img, medidas);
+    const ciclos = pelaForma.ciclos.map(pontos => emPixels(pontos, fator));
+    /* A mesma busca da espera, na imagem pequena: ali a textura da mesa quase não aparece. */
+    const fatorPequeno = Math.max(1, Math.round(Math.max(w, h) / LEITURA.LADO_BUSCA));
+    const pequena = reduzir(canal, w, h, fatorPequeno);
+    const naEspera = marcadoresPelaForma(pequena, medidas, [Math.max(pequena.w, pequena.h) / 14]);
+    ciclos.splice(LEITURA.CICLOS_COM_QR - 2, 0, ...naEspera.ciclos.slice(0, 2).map(pontos => emPixels(pontos, fatorPequeno)));
+    if (ciclos.length) return { ciclos, candidatos: pelaForma.candidatos };
+    return { erro: 'Os 4 quadrados pretos precisam aparecer inteiros na imagem.', candidatos: pelaForma.candidatos };
+  }
+
+  /* Com a orientação certa, as colunas de traços começam pelos blocos de início. */
+  function notaDaOrientacao(img, H, medidas) {
+    const inicios = [medidas.num, medidas.vf].filter(Boolean)
+      .flatMap(grupo => [grupo.esq, grupo.dir].map(x => [x, grupo.ys[0] - medidas.bloco.recuo]));
+    return inicios.filter(([x, y]) => acharBlocoInicial(img, H, x, y, medidas.bloco)).length / inicios.length;
+  }
+
+  function girosDoCiclo(ciclo, medidas) {
+    return [0, 1, 2, 3].map(k => {
+      const [tl, tr, br, bl] = [0, 1, 2, 3].map(i => ciclo[(k + i) % 4]);
+      return homografia(medidas.marcadores, [tl, tr, bl, br]);
+    });
+  }
+
+  /* O QR só aparece no lugar previsto com a folha certa e o giro certo. */
+  function qrNoLugar(H, qr, medidas) {
+    const previsto = aplicar(H, medidas.qr.x + medidas.qr.lado / 2, medidas.qr.y + medidas.qr.lado / 2);
+    const real = [(qr.tl[0] + qr.br[0]) / 2, (qr.tl[1] + qr.br[1]) / 2];
+    const pxQR = Math.hypot(qr.tr[0] - qr.tl[0], qr.tr[1] - qr.tl[1]) / medidas.qr.lado;
+    return Math.hypot(previsto[0] - real[0], previsto[1] - real[1]) / pxQR <= 10;
+  }
+
+  /* Com o QR lido no lugar publicado, a folha está confirmada. Senão, decidem os blocos de início, que valem
+   * mesmo com o QR fora desse lugar: o código é calculado das questões, e o mesmo código garante as mesmas
+   * linhas e colunas. Sem blocos legíveis, ainda vale o QR lido no recorte endireitado.
+   * Devolve {H, qr, nota}, sem H quando a folha não foi reconhecida. */
+  function escolherOrientacao(img, ciclos, medidas, qr) {
+    const giros = ciclos.slice(0, LEITURA.CICLOS_COM_QR).flatMap(ciclo => girosDoCiclo(ciclo, medidas));
+    const confirmado = qr ? giros.find(H => qrNoLugar(H, qr, medidas)) : null;
+    if (confirmado) return { H: confirmado, qr: qr.texto, nota: 1 };
+    let melhor = { H: null, nota: 0 };
+    for (const H of giros) {
+      const nota = notaDaOrientacao(img, H, medidas);
+      if (nota > melhor.nota) melhor = { H, nota };
+      if (melhor.nota >= 0.75) break;
+    }
+    if (melhor.nota >= 0.5) {
+      const texto = qr ? qr.texto : lerQRRetificado(img, melhor.H, medidas) || lerQRRetificado(img, melhor.H, medidas, true);
+      return { H: melhor.H, qr: texto, nota: melhor.nota };
+    }
+    if (!qr) {
+      for (const H of giros) {
+        const texto = lerQRRetificado(img, H, medidas);
+        if (texto) return { H, qr: texto, nota: melhor.nota };
+      }
+    }
+    return { H: null, nota: melhor.nota };
+  }
+
+  /* Segunda chance para o QR: com a folha já alinhada, recorta a área dele e endireita a imagem.
+   * Com "folhaInteira", endireita a folha toda: serve quando o QR não está no lugar publicado. */
+  function lerQRRetificado(img, H, medidas, folhaInteira) {
+    if (typeof jsQR !== 'function') return null;
+    const Q = medidas.qr, margem = 6;
+    const area = folhaInteira ? { x: -5, y: 0, l: 220, a: 297 } : { x: Q.x - margem, y: Q.y - margem, l: Q.lado + 2 * margem, a: Q.lado + 2 * margem };
+    const porMm = folhaInteira ? 6 : 10;
+    const largura = area.l * porMm, altura = area.a * porMm;
+    const rgba = new Uint8ClampedArray(largura * altura * 4);
+    const suave = (x, y) => {
+      const x0 = Math.floor(x), y0 = Math.floor(y), tx = x - x0, ty = y - y0;
+      return (valorEm(img, x0, y0) * (1 - tx) + valorEm(img, x0 + 1, y0) * tx) * (1 - ty) +
+        (valorEm(img, x0, y0 + 1) * (1 - tx) + valorEm(img, x0 + 1, y0 + 1) * tx) * ty;
+    };
+    for (let j = 0; j < altura; j++) {
+      for (let i = 0; i < largura; i++) {
+        const p = aplicar(H, area.x + i / porMm, area.y + j / porMm);
+        const v = suave(p[0], p[1]), k = (j * largura + i) * 4;
+        rgba[k] = rgba[k + 1] = rgba[k + 2] = v;
+        rgba[k + 3] = 255;
+      }
+    }
+    const achado = jsQR(rgba, largura, altura, { inversionAttempts: 'dontInvert' });
+    return achado && achado.data ? achado.data : null;
+  }
+
+  function homografia(origem, destino) {
+    const A = [];
+    origem.forEach(([x, y], i) => {
+      const [u, v] = destino[i];
+      A.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+      A.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+    });
+    for (let c = 0; c < 8; c++) {
+      let pivo = c;
+      for (let l = c + 1; l < 8; l++) if (Math.abs(A[l][c]) > Math.abs(A[pivo][c])) pivo = l;
+      [A[c], A[pivo]] = [A[pivo], A[c]];
+      for (let l = 0; l < 8; l++) {
+        if (l === c) continue;
+        const f = A[l][c] / A[c][c];
+        for (let k = c; k < 9; k++) A[l][k] -= f * A[c][k];
+      }
+    }
+    return A.map((linha, i) => linha[8] / linha[i]);
+  }
+
+  function aplicar(H, x, y) {
+    const d = H[6] * x + H[7] * y + 1;
+    return [(H[0] * x + H[1] * y + H[2]) / d, (H[3] * x + H[4] * y + H[5]) / d];
+  }
+
+  function valorEm(img, x, y) {
+    const px = x < 0 ? 0 : x >= img.w - 1 ? img.w - 1 : Math.round(x);
+    const py = y < 0 ? 0 : y >= img.h - 1 ? img.h - 1 : Math.round(y);
+    return img.canal[py * img.w + px];
+  }
+
+  function corridaEscura(perfil, passo, minMm, maxMm) {
+    let min = 255, max = 0;
+    perfil.forEach(v => { if (v < min) min = v; if (v > max) max = v; });
+    if (max - min < 22) return null;
+    const limiar = (min + max) / 2;
+    const meio = (perfil.length - 1) / 2;
+    let melhor = null;
+    for (let i = 0; i < perfil.length; i++) {
+      if (perfil[i] >= limiar) continue;
+      let f = i;
+      while (f + 1 < perfil.length && perfil[f + 1] < limiar) f++;
+      const largura = (f - i + 1) * passo;
+      if (largura >= minMm && largura <= maxMm) {
+        const centro = ((i + f) / 2 - meio) * passo;
+        if (!melhor || Math.abs(centro) < Math.abs(melhor.centro)) melhor = { centro };
+      }
+      i = f;
+    }
+    return melhor;
+  }
+
+  function localizarTraco(img, centro, ux, uy) {
+    const passo = 0.2;
+    const ponto = (u, v) => valorEm(img, centro[0] + ux[0] * u + uy[0] * v, centro[1] + ux[1] * u + uy[1] * v);
+    const perfilV = [];
+    for (let i = -10; i <= 10; i++) {
+      let soma = 0;
+      for (let j = -4; j <= 4; j++) soma += ponto(j * 0.25, i * passo);
+      perfilV.push(soma / 9);
+    }
+    const vertical = corridaEscura(perfilV, passo, 0.6, 3);
+    if (!vertical) return null;
+    const perfilU = [];
+    for (let i = -15; i <= 15; i++) {
+      let soma = 0;
+      for (let j = -2; j <= 2; j++) soma += ponto(i * passo, vertical.centro + j * 0.2);
+      perfilU.push(soma / 5);
+    }
+    const horizontal = corridaEscura(perfilU, passo, 1.4, 5);
+    return { du: horizontal ? horizontal.centro : 0, dv: vertical.centro };
+  }
+
+  function mediana(lista) {
+    const v = lista.slice().sort((a, b) => a - b);
+    return v[Math.floor(v.length / 2)];
+  }
+
+  /* Bloco de início: tem formato próprio e fica acima do primeiro traço. Começar por ele impede que a
+   * leitura escorregue uma linha inteira ou pegue a coluna vizinha quando a folha ondulada desloca a tabela.
+   * A busca é larga (16 mm para os lados, 14 mm na vertical) porque os traços são impressos junto das
+   * tabelas: é o papel que diz onde elas estão, e a publicação pode estar em outra posição. Uma célula
+   * pintada tem o tamanho do bloco, mas não tem um traço exatamente abaixo dela. */
+  function acharBlocoInicial(img, H, x, y, bloco) {
+    const c = aplicar(H, x, y), a = aplicar(H, x + 1, y), b = aplicar(H, x, y + 1);
+    const ux = [a[0] - c[0], a[1] - c[1]], uy = [b[0] - c[0], b[1] - c[1]];
+    const passo = 0.25, meiaU = 64, meiaV = 56;
+    const largura = meiaU * 2 + 1, altura = meiaV * 2 + 1;
+    const grade = new Uint8Array(largura * altura);
+    let min = 255, max = 0;
+    for (let j = 0; j < altura; j++) {
+      for (let i = 0; i < largura; i++) {
+        const u = (i - meiaU) * passo, v = (j - meiaV) * passo;
+        const valor = valorEm(img, c[0] + ux[0] * u + uy[0] * v, c[1] + ux[1] * u + uy[1] * v);
+        grade[j * largura + i] = valor;
+        if (valor < min) min = valor;
+        if (valor > max) max = valor;
+      }
+    }
+    if (max - min < 22) return null;
+    const limiar = (min + max) / 2;
+    const bin = grade.map(valor => (valor < limiar ? 1 : 0));
+    const tracoAbaixo = (u, v) => {
+      let escuros = 0, total = 0;
+      for (let dv = -0.4; dv <= 0.41; dv += 0.2) {
+        for (let du = -1; du <= 1.01; du += 0.25) {
+          total++;
+          if (valorEm(img, c[0] + ux[0] * (u + du) + uy[0] * (v + dv), c[1] + ux[1] * (u + du) + uy[1] * (v + dv)) < limiar) escuros++;
+        }
+      }
+      return escuros >= total * 0.6;
+    };
+    const candidatos = componentes(bin, largura, altura).map(c2 => ({ c2, u: (c2.x - meiaU) * passo, v: (c2.y - meiaV) * passo })).filter(({ c2, u, v }) => {
+      const l = (c2.maxX - c2.minX + 1) * passo, h = (c2.maxY - c2.minY + 1) * passo;
+      return l >= bloco.l * 0.72 && l <= bloco.l * 1.28 && h >= bloco.a * 0.67 && h <= bloco.a * 1.33 && c2.area * passo * passo / (l * h) >= 0.7 && tracoAbaixo(u, v + bloco.recuo);
+    });
+    if (!candidatos.length) return null;
+    const maisPerto = candidatos.reduce((p, q) => (Math.hypot(q.u, q.v) < Math.hypot(p.u, p.v) ? q : p));
+    return { du: maisPerto.u, dv: maisPerto.v };
+  }
+
+  /* Segue os traços de cima para baixo: cada desvio parte do desvio do traço anterior.
+   * Devolve, para cada traço, o desvio em pixels entre o previsto e o encontrado. */
+  function rastrearTracos(img, H, x, ys, bloco) {
+    const inicio = acharBlocoInicial(img, H, x, ys[0] - bloco.recuo, bloco);
+    let du = inicio ? inicio.du : 0, dv = inicio ? inicio.dv : 0;
+    const brutos = ys.map(y => {
+      const c = aplicar(H, x, y), a = aplicar(H, x + 1, y), b = aplicar(H, x, y + 1);
+      const ux = [a[0] - c[0], a[1] - c[1]], uy = [b[0] - c[0], b[1] - c[1]];
+      const centro = [c[0] + ux[0] * du + uy[0] * dv, c[1] + ux[1] * du + uy[1] * dv];
+      const achado = localizarTraco(img, centro, ux, uy);
+      if (achado) { du += achado.du; dv += achado.dv; }
+      return { y, ux, uy, du, dv, achado: Boolean(achado) };
+    });
+    const pontos = brutos.map((b, i) => {
+      const vizinhos = brutos.slice(Math.max(0, i - 2), i + 3);
+      const medU = mediana(vizinhos.map(v => v.du)), medV = mediana(vizinhos.map(v => v.dv));
+      const finalU = Math.abs(b.du - medU) > 0.8 ? medU : b.du;
+      const finalV = Math.abs(b.dv - medV) > 0.8 ? medV : b.dv;
+      return { y: b.y, dx: b.ux[0] * finalU + b.uy[0] * finalV, dy: b.ux[1] * finalU + b.uy[1] * finalV, mm: Math.hypot(finalU, finalV), achado: b.achado };
+    });
+    pontos.blocoAchado = Boolean(inicio);
+    return pontos;
+  }
+
+  function desvioEm(pontos, y) {
+    if (y <= pontos[0].y) return [pontos[0].dx, pontos[0].dy];
+    const ultimo = pontos[pontos.length - 1];
+    if (y >= ultimo.y) return [ultimo.dx, ultimo.dy];
+    let i = 1;
+    while (pontos[i].y < y) i++;
+    const a = pontos[i - 1], b = pontos[i], t = (y - a.y) / (b.y - a.y);
+    return [a.dx + (b.dx - a.dx) * t, a.dy + (b.dy - a.dy) * t];
+  }
+
+  /* Centro e eixos da célula, com o desvio medido nos traços dos dois lados da tabela. */
+  function localDaCelula(H, trilhos, x, y) {
+    const ponto = (px, py) => {
+      const a = desvioEm(trilhos.esq, py), b = desvioEm(trilhos.dir, py);
+      const f = (px - trilhos.xEsq) / (trilhos.xDir - trilhos.xEsq);
+      const p = aplicar(H, px, py);
+      return [p[0] + a[0] + (b[0] - a[0]) * f, p[1] + a[1] + (b[1] - a[1]) * f];
+    };
+    const centro = ponto(x, y), dx = ponto(x + 1, y), dy = ponto(x, y + 1);
+    return { centro, ux: [dx[0] - centro[0], dx[1] - centro[1]], uy: [dy[0] - centro[0], dy[1] - centro[1]] };
+  }
+
+  function quantilDe(lista, q) {
+    if (!lista.length) return 0;
+    const v = lista.slice().sort((a, b) => a - b);
+    const pos = (v.length - 1) * q;
+    const base = Math.floor(pos), resto = pos - base;
+    return v[base] + (v[Math.min(v.length - 1, base + 1)] - v[base]) * resto;
+  }
+
+  /* Mede só a área central da célula, longe das bordas impressas da grade.
+   * Devolve o brilho médio da célula e o brilho médio dos 30% de ladrilhos mais escuros (~0,9 mm cada):
+   * assim a leitura não usa nenhum limiar absoluto de luz, apenas o contraste com as células vizinhas. */
+  function medirCelula(img, local, meiaL, meiaA) {
+    const passo = 0.22, porLadrilho = 4;
+    const nU = Math.floor(2 * meiaL / passo) + 1, nV = Math.floor(2 * meiaA / passo) + 1;
+    const colunas = Math.ceil(nU / porLadrilho), linhas = Math.ceil(nV / porLadrilho);
+    const somas = new Float32Array(colunas * linhas), contagens = new Uint16Array(colunas * linhas);
+    let soma = 0;
+    for (let j = 0; j < nV; j++) {
+      const v = -meiaA + j * passo;
+      for (let i = 0; i < nU; i++) {
+        const u = -meiaL + i * passo;
+        const valor = valorEm(img, local.centro[0] + local.ux[0] * u + local.uy[0] * v, local.centro[1] + local.ux[1] * u + local.uy[1] * v);
+        const ladrilho = Math.floor(j / porLadrilho) * colunas + Math.floor(i / porLadrilho);
+        somas[ladrilho] += valor;
+        contagens[ladrilho]++;
+        soma += valor;
+      }
+    }
+    const ladrilhos = [];
+    for (let k = 0; k < somas.length; k++) if (contagens[k]) ladrilhos.push(somas[k] / contagens[k]);
+    ladrilhos.sort((a, b) => a - b);
+    const nEscuros = Math.min(ladrilhos.length, Math.max(2, Math.ceil(ladrilhos.length * 0.30)));
+    let somaEscuros = 0;
+    for (let k = 0; k < nEscuros; k++) somaEscuros += ladrilhos[k];
+    return {
+      media: soma / (nU * nV),
+      escura: somaEscuros / Math.max(1, nEscuros)
+    };
+  }
+
+  function diferencaRelativa(a, b) {
+    return Math.abs(a - b) / Math.max(12, Math.max(a, b));
+  }
+
+  function estimarRuido(paresEscura, paresMedia) {
+    if (!paresEscura.length) return 0.02;
+    const r = Math.max(quantilDe(paresEscura, 0.45), quantilDe(paresMedia, 0.45));
+    return Math.min(0.09, Math.max(0.008, r));
+  }
+
+  /* Pintura que passa da borda suja a célula ao lado. Cada célula perde parte do contraste da vizinha
+   * imediata mais forte: isso apaga o borrão e mantém duas marcas reais encostadas. grade: [coluna][linha] */
+  function descontarVizinhas(grade) {
+    const bruta = grade.map(coluna => coluna.map(celula => celula.tinta));
+    const em = (c, r) => (bruta[c] && bruta[c][r] !== undefined ? bruta[c][r] : 0);
+    grade.forEach((coluna, c) => coluna.forEach((celula, r) => {
+      const vizinha = Math.max(em(c, r - 1), em(c, r + 1), em(c - 1, r), em(c + 1, r));
+      celula.tinta = Math.max(0, bruta[c][r] - LEITURA.BORRAO * vizinha);
+    }));
+  }
+
+  /* Calcula a marcação pelo contraste relativo com as células vizinhas do mesmo tom de linha (zebra),
+   * descontando o ruído local de baixa iluminação e o fundo da própria coluna. */
+  function calcularContrasteNum(grade, celulasNDA) {
+    const difE = [], difM = [];
+    grade.forEach((coluna, c) => coluna.forEach((celula, r) => {
+      if (coluna[r + 2]) {
+        difE.push(diferencaRelativa(celula.escura, coluna[r + 2].escura));
+        difM.push(diferencaRelativa(celula.media, coluna[r + 2].media));
+      }
+      if (grade[c + 1] && grade[c + 1][r]) {
+        difE.push(diferencaRelativa(celula.escura, grade[c + 1][r].escura));
+        difM.push(diferencaRelativa(celula.media, grade[c + 1][r].media));
+      }
+    }));
+    const ruido = estimarRuido(difE, difM);
+
+    const coletarVizinhas = (c, r, rCol, rLin, passoLin) => {
+      const lista = [];
+      for (let dc = -rCol; dc <= rCol; dc++) {
+        const outra = grade[c + dc];
+        if (!outra) continue;
+        for (let dr = -rLin; dr <= rLin; dr += passoLin) {
+          if (dc === 0 && dr === 0) continue;
+          if (outra[r + dr]) lista.push(outra[r + dr]);
+        }
+      }
+      return lista;
+    };
+
+    grade.forEach((coluna, c) => coluna.forEach((celula, r) => {
+      let vizinhas = coletarVizinhas(c, r, 2, 4, 2);
+      if (vizinhas.length < 4) vizinhas = coletarVizinhas(c, r, 3, 6, 2);
+      if (vizinhas.length < 3) vizinhas = coletarVizinhas(c, r, 2, 2, 1);
+      if (!vizinhas.length) vizinhas = [celula];
+      const baseE = Math.max(12, quantilDe(vizinhas.map(v => v.escura), 0.58));
+      const baseM = Math.max(12, quantilDe(vizinhas.map(v => v.media), 0.58));
+      const cE = Math.max(0, (baseE - celula.escura) / baseE);
+      const cM = Math.max(0, (baseM - celula.media) / baseM);
+      celula.bruto = Math.max(cE, cM * LEITURA.GANHO_MEDIA);
+    }));
+
+    grade.forEach(coluna => {
+      const ordenados = coluna.map(celula => celula.bruto).sort((a, b) => b - a);
+      const fundoColuna = ordenados.length >= 5 ? ordenados[2] : 0;
+      const piso = Math.max(LEITURA.RUIDO * ruido, fundoColuna * 0.9);
+      coluna.forEach(celula => { celula.tinta = Math.max(0, celula.bruto - piso); });
+    });
+
+    const antesUltima = grade.map(coluna => (coluna.length ? coluna[coluna.length - 1].tinta : 0));
+    descontarVizinhas(grade);
+
+    if (celulasNDA.length) {
+      const difNDAE = [], difNDAM = [];
+      for (let c = 0; c + 1 < celulasNDA.length; c++) {
+        difNDAE.push(diferencaRelativa(celulasNDA[c].escura, celulasNDA[c + 1].escura));
+        difNDAM.push(diferencaRelativa(celulasNDA[c].media, celulasNDA[c + 1].media));
+      }
+      const ruidoNDA = celulasNDA.length >= 4 ? estimarRuido(difNDAE, difNDAM) : ruido;
+      celulasNDA.forEach((nda, c) => {
+        const viz = [];
+        for (let dc = -4; dc <= 4; dc++) {
+          if (dc !== 0 && celulasNDA[c + dc]) viz.push(celulasNDA[c + dc]);
+        }
+        if (viz.length < 2) grade.forEach(col => viz.push(...col.slice(-4)));
+        if (!viz.length) viz.push(nda);
+        const baseE = Math.max(12, quantilDe(viz.map(v => v.escura), 0.68));
+        const baseM = Math.max(12, quantilDe(viz.map(v => v.media), 0.68));
+        const cE = Math.max(0, (baseE - nda.escura) / baseE);
+        const cM = Math.max(0, (baseM - nda.media) / baseM);
+        nda.bruto = Math.max(0, Math.max(cE, cM * LEITURA.GANHO_MEDIA) - LEITURA.RUIDO * ruidoNDA);
+      });
+      celulasNDA.forEach((nda, c) => {
+        const vizNDA = Math.max(c > 0 ? celulasNDA[c - 1].bruto : 0, c + 1 < celulasNDA.length ? celulasNDA[c + 1].bruto : 0, antesUltima[c]);
+        nda.tinta = Math.max(0, nda.bruto - LEITURA.BORRAO * vizNDA);
+        const col = grade[c];
+        if (col && col.length) col[col.length - 1].tinta = Math.max(0, col[col.length - 1].tinta - LEITURA.BORRAO * nda.bruto);
+      });
+    }
+  }
+
+  /* No V/F até metade das células está marcada: usa como referência a célula mais clara do par (V, F)
+   * nas linhas vizinhas do mesmo tom (zebra), preservando o contraste mesmo com 100% dos itens respondidos. */
+  function calcularContrasteVF(grades) {
+    const difE = [], difM = [];
+    grades.forEach(grade => {
+      const n = grade[0].length;
+      const passo = n >= 4 ? 2 : 1;
+      for (let r = 0; r + passo < n; r++) {
+        const uE0 = Math.max(grade[0][r].escura, grade[1][r].escura);
+        const uE1 = Math.max(grade[0][r + passo].escura, grade[1][r + passo].escura);
+        const uM0 = Math.max(grade[0][r].media, grade[1][r].media);
+        const uM1 = Math.max(grade[0][r + passo].media, grade[1][r + passo].media);
+        difE.push(diferencaRelativa(uE0, uE1));
+        difM.push(diferencaRelativa(uM0, uM1));
+      }
+    });
+    const ruido = estimarRuido(difE, difM);
+
+    grades.forEach(grade => {
+      const n = grade[0].length;
+      const uE = Array.from({ length: n }, (_, r) => Math.max(grade[0][r].escura, grade[1][r].escura));
+      const uM = Array.from({ length: n }, (_, r) => Math.max(grade[0][r].media, grade[1][r].media));
+      for (let r = 0; r < n; r++) {
+        const vizE = [], vizM = [];
+        for (let dr = -6; dr <= 6; dr += 2) {
+          if (dr !== 0 && uE[r + dr] !== undefined) { vizE.push(uE[r + dr]); vizM.push(uM[r + dr]); }
+        }
+        if (!vizE.length) {
+          for (const dr of [-1, 1]) if (uE[r + dr] !== undefined) { vizE.push(uE[r + dr]); vizM.push(uM[r + dr]); }
+        }
+        let baseE = uE[r], baseM = uM[r];
+        if (vizE.length) {
+          const medE = quantilDe(vizE, 0.5), medM = quantilDe(vizM, 0.5);
+          const duplaNaLinha = uE[r] < medE * 0.85;
+          baseE = duplaNaLinha ? medE : 0.5 * uE[r] + 0.5 * medE;
+          baseM = duplaNaLinha ? medM : 0.5 * uM[r] + 0.5 * medM;
+        }
+        baseE = Math.max(12, baseE);
+        baseM = Math.max(12, baseM);
+        for (let vc = 0; vc < 2; vc++) {
+          const celula = grade[vc][r];
+          const cE = Math.max(0, (baseE - celula.escura) / baseE);
+          const cM = Math.max(0, (baseM - celula.media) / baseM);
+          celula.tinta = Math.max(0, Math.max(cE, cM * LEITURA.GANHO_MEDIA) - LEITURA.RUIDO * ruido);
+        }
+      }
+      descontarVizinhas(grade);
+    });
+  }
+
+  function decidirColuna(fracoes, tintaNDA) {
+    const ordem = fracoes.map((f, linha) => ({ f, linha })).sort((a, b) => b.f - a.f);
+    const topo = ordem[0] || { f: 0, linha: 0 };
+    const segunda = ordem[1] || { f: 0, linha: 0 };
+    const ndaForte = tintaNDA >= LEITURA.NDA;
+    const ndaDuvida = !ndaForte && tintaNDA >= LEITURA.DUVIDA;
+    if (topo.f < LEITURA.DUVIDA) {
+      if (ndaForte) return { tipo: 'nda', linhas: [] };
+      if (ndaDuvida) return { tipo: 'duvida', nda: true, linhas: [] };
+      return { tipo: 'branco', linhas: [] };
+    }
+    if (topo.f < LEITURA.MARCA) {
+      const linhas = segunda.f >= topo.f * 0.7 ? [topo.linha, segunda.linha].sort((a, b) => a - b) : [topo.linha];
+      return { tipo: 'duvida', nda: ndaForte || ndaDuvida, linhas };
+    }
+    if (ndaForte || ndaDuvida) {
+      return { tipo: 'duvida', nda: true, linhas: [topo.linha] };
+    }
+    const marcadas = ordem.filter(o => o.f >= Math.max(LEITURA.MARCA * 1.15, topo.f * LEITURA.SEGUNDA)).map(o => o.linha).sort((a, b) => a - b);
+    if (marcadas.length > 1) return { tipo: 'dupla', linhas: marcadas };
+    if (segunda.f >= Math.max(LEITURA.DUVIDA, topo.f * 0.55)) {
+      return { tipo: 'duvida', linhas: [topo.linha, segunda.linha].sort((a, b) => a - b) };
+    }
+    return { tipo: 'uma', linhas: [topo.linha] };
+  }
+
+  function decidirVF(fV, fF) {
+    const maior = Math.max(fV, fF), menor = Math.min(fV, fF);
+    if (maior < LEITURA.DUVIDA) return '';
+    if (maior < LEITURA.MARCA) return '?';
+    if (menor >= Math.max(LEITURA.MARCA * 1.4, maior * LEITURA.SEGUNDA)) return 'VF';
+    if (menor >= Math.max(LEITURA.DUVIDA, maior * 0.50)) return '?';
+    return fV > fF ? 'V' : 'F';
+  }
+
+  /* Procura a folha numa imagem pequena, várias vezes por segundo: só os 4 quadrados, sem QR. */
+  function acharFolhaRapido(canvas, medidas) {
+    const w = canvas.width, h = canvas.height;
+    const rgba = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+    const maior = Math.max(w, h);
+    const { ciclos } = marcadoresPelaForma({ dados: criarCanal(rgba, w, h), w, h }, medidas, [maior / 14]);
+    if (!ciclos.length) return null;
+    const pontos = ciclos[0];
+    const xs = pontos.map(p => p.x), ys = pontos.map(p => p.y);
+    return {
+      x: xs.reduce((s, v) => s + v, 0) / 4, y: ys.reduce((s, v) => s + v, 0) / 4,
+      tamanho: Math.max(...xs) - Math.min(...xs) + Math.max(...ys) - Math.min(...ys),
+      lado: maior
+    };
+  }
+
+  /* Leitura completa de uma imagem. Devolve {erro} ou {qr, colunas, vf, recusa, ...}; a leitura com
+   * "recusa" não deve ser usada: é melhor pedir outra imagem do que marcar errado sem avisar. */
+  function lerFolha(canvas, medidas) {
+    const inicio = performance.now();
+    const w = canvas.width, h = canvas.height;
+    const canal = criarCanal(canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data, w, h);
+    const img = { canal, w, h };
+    const qr = acharQR(canvas);
+    let achados = acharMarcadores(canal, w, h, qr, medidas);
+    const base = { w, h, qr: qr ? qr.texto : null, candidatos: achados.candidatos || 0 };
+    const tempo = () => Math.round(performance.now() - inicio);
+    let H = achados.pontos ? homografia(medidas.marcadores, achados.pontos) : null;
+    /* Algo escuro na mesa pode passar por quadrado: com o QR fora do lugar, a busca recomeça pela forma. */
+    if (H && !qrNoLugar(H, qr, medidas)) {
+      H = null;
+      achados = acharMarcadores(canal, w, h, null, medidas);
+    }
+    if (achados.erro) return Object.assign(base, { erro: achados.erro, ms: tempo() });
+    if (!H) {
+      const orientada = escolherOrientacao(img, achados.ciclos, medidas, qr);
+      base.nota = orientada.nota;
+      base.retangulos = achados.ciclos.length;
+      if (!orientada.H) return Object.assign(base, { erro: FOLHA_NAO_CONFERE, ms: tempo() });
+      H = orientada.H;
+      base.qr = orientada.qr;
+    }
+
+    const centro = aplicar(H, 106, 150), ao_lado = aplicar(H, 107, 150);
+    const pxPorMm = Math.hypot(ao_lado[0] - centro[0], ao_lado[1] - centro[1]);
+    const suave = { canal: suavizar(canal, w, h, Math.max(1, Math.round(pxPorMm * LEITURA.SUAVE_MM))), w, h };
+    const trilhosDe = grupo => ({
+      xEsq: grupo.esq, xDir: grupo.dir,
+      esq: rastrearTracos(suave, H, grupo.esq, grupo.ys, medidas.bloco),
+      dir: rastrearTracos(suave, H, grupo.dir, grupo.ys, medidas.bloco)
+    });
+    const colunasDeTracos = [];
+    const colunas = [];
+    if (medidas.num) {
+      const N = medidas.num, trilhos = trilhosDe(N);
+      colunasDeTracos.push(trilhos.esq, trilhos.dir);
+      const medidasNum = N.colunas.map(coluna => {
+        const celulas = N.linhas.map(y => {
+          const local = localDaCelula(H, trilhos, coluna.x, y);
+          return Object.assign({ local }, medirCelula(suave, local, N.l * 0.31, N.a * 0.26));
+        });
+        const nda = N.nda ? Object.assign({}, medirCelula(suave, localDaCelula(H, trilhos, coluna.x, N.nda.y), N.l * 0.32, N.nda.a * 0.26)) : null;
+        return { r: coluna.r, celulas, nda };
+      });
+      calcularContrasteNum(
+        medidasNum.map(coluna => coluna.celulas),
+        N.nda ? medidasNum.map(coluna => coluna.nda) : []
+      );
+      medidasNum.forEach(coluna => {
+        const decisao = decidirColuna(coluna.celulas.map(celula => celula.tinta), coluna.nda ? coluna.nda.tinta : 0);
+        colunas.push(Object.assign({ r: coluna.r, tintas: coluna.celulas.map(celula => Math.round(celula.tinta * 100) / 100) }, decisao));
+      });
+    }
+
+    const vf = [];
+    if (medidas.vf) {
+      const V = medidas.vf, trilhos = trilhosDe(V);
+      colunasDeTracos.push(trilhos.esq, trilhos.dir);
+      const blocos = new Map();
+      const celulasVF = V.itens.map(item => {
+        const par = [item.xV, item.xF].map(x => {
+          const local = localDaCelula(H, trilhos, x, item.y);
+          return Object.assign({ local }, medirCelula(suave, local, V.l * 0.31, V.a * 0.26));
+        });
+        const chave = Math.round(item.xV);
+        if (!blocos.has(chave)) blocos.set(chave, [[], []]);
+        blocos.get(chave)[0].push(par[0]);
+        blocos.get(chave)[1].push(par[1]);
+        return par;
+      });
+      calcularContrasteVF(Array.from(blocos.values()));
+      celulasVF.forEach((par, i) => vf.push({ r: V.itens[i].r, valor: decidirVF(par[0].tinta, par[1].tinta) }));
+    }
+
+    const tracos = [].concat(...colunasDeTracos);
+    const recusa = [];
+    if (pxPorMm < LEITURA.MIN_PX_MM) recusa.push('a folha ficou pequena na imagem');
+    if (colunasDeTracos.some(lista => !lista.blocoAchado)) recusa.push('faltou um bloco de início');
+    if (tracos.filter(t => t.achado).length < tracos.length * 0.9) recusa.push('muitos traços não apareceram');
+    if (colunas.some(coluna => coluna.linhas.length > 3)) recusa.push('coluna com marcas demais');
+    return Object.assign(base, {
+      colunas, vf, recusa, pxPorMm,
+      tracosAchados: tracos.filter(t => t.achado).length, tracosTotal: tracos.length,
+      desvioMaximo: Math.max(...tracos.map(t => t.mm)), ms: tempo()
+    });
+  }
+</script>
+<script>
+  /* Implantação "Qualquer pessoa" do projeto principal (o trecho entre "/s/" e "/exec" do link do Web App)
+   * e Client ID do login do Google, o mesmo das outras páginas de ifscri.github.io. */
+  const ID_DA_IMPLANTACAO = 'AKfycbxBz7h3pmIJll6C_YRgy3wmVz54kuy6cuajYwwSN1PjTSFp4Uo84xiAhT720_XhyMf4';
+  const CLIENT_ID_GOOGLE = '90142364675-oeo4houafkfl9sj6fcbqt71injv8v3jj.apps.googleusercontent.com';
+
+  /* Estado da sessão do aluno. Nada do aluno fica salvo no tablet: ao sair, tudo é descartado. */
+  const TEMPO_INATIVIDADE_MS = 4 * 60 * 1000;
+  const estado = { consultas: [], pub: null, codigo: '', dados: null, marcadas: new Map(), duvidas: new Map(), resultado: null, enviando: false, alterado: false, nota: null, entrando: false };
+  const el = id => document.getElementById(id);
+  let chaveDoTablet = '';   /* devolvida pelo GAS depois do login do professor; abre só as funções do aluno */
+  let modo = null;   /* 'manual', 'camera' ou 'massa' */
+  const usaCamera = () => modo === 'camera' || modo === 'massa';
+  let temporizadorInatividade = null;
+
+  function esc(valor) {
+    return String(valor ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function pedirAoGAS(funcao, argumentos) {
+    const controle = new AbortController();
+    const limite = setTimeout(() => controle.abort(), 40000);
+    const endereco = 'https://script.google.com/macros/s/' + ID_DA_IMPLANTACAO + '/exec';
+    const pedido = JSON.stringify({ funcao, argumentos, chave: chaveDoTablet });
+    return fetch(endereco, { method: 'POST', body: new URLSearchParams({ pedidoTablet: pedido }), signal: controle.signal })
+      .then(resposta => {
+        if (!resposta.ok) throw new Error('O servidor respondeu com erro ' + resposta.status + '.');
+        return resposta.text();
+      })
+      .then(retorno => {
+        if (retorno.startsWith('{"status":"sessao"')) {
+          chaveVencida();
+          throw new Error('A habilitação deste tablet venceu.');
+        }
+        return retorno;
+      })
+      .finally(() => clearTimeout(limite));
+  }
+
+  function chamar(funcao, argumentos, texto) {
+    mostrarCarregando(texto || 'Carregando...');
+    return pedirAoGAS(funcao, argumentos).then(
+      retorno => { mostrarCarregando(false); return JSON.parse(retorno); },
+      erro => { mostrarCarregando(false); throw erro; }
+    );
+  }
+
+  function mostrarCarregando(texto) {
+    el('carregando').hidden = !texto;
+    if (texto) el('carregandoTexto').textContent = texto;
+  }
+
+  function mostrarTela(id) {
+    ['telaHabilitar', 'telaSairDaConta', 'telaModo', 'telaCamera', 'telaProvas', 'telaCodigo', 'telaConfirmar', 'telaRespostas'].forEach(tela => { el(tela).hidden = tela !== id; });
+    el('btnSair').hidden = id !== 'telaConfirmar' && id !== 'telaRespostas';
+    el('barraAcoes').hidden = id !== 'telaRespostas';
+    window.scrollTo(0, 0);
+  }
+
+  /* ----------------------------- Zoom (baixa visão / tabelas grandes) ----------------------------- */
+  const NIVEIS_ZOOM = [0.6, 0.7, 0.8, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2, 2.5];
+  let indiceZoom = NIVEIS_ZOOM.indexOf(1);
+  try {
+    const salvo = Number(localStorage.getItem('consultaZoom'));
+    if (NIVEIS_ZOOM.includes(salvo)) indiceZoom = NIVEIS_ZOOM.indexOf(salvo);
+  } catch (erro) { /* sem armazenamento: começa em 100% */ }
+
+  function aplicarZoom() {
+    const zoom = NIVEIS_ZOOM[indiceZoom];
+    const raiz = document.documentElement.style;
+    raiz.setProperty('--zoom', zoom);
+    raiz.setProperty('--zoom-modal', Math.min(zoom, 1.4));
+    /* A área com rolagem das tabelas ocupa sempre ~62% da altura visível, em qualquer zoom. */
+    raiz.setProperty('--altura-tabela', Math.round(window.innerHeight * 0.62 / zoom) + 'px');
+    el('btnZoomPadrao').textContent = Math.round(zoom * 100) + '%';
+    el('btnZoomMenos').disabled = indiceZoom === 0;
+    el('btnZoomMais').disabled = indiceZoom === NIVEIS_ZOOM.length - 1;
+    try { localStorage.setItem('consultaZoom', String(zoom)); } catch (erro) { /* ignora */ }
+  }
+  el('btnZoomMenos').addEventListener('click', () => { if (indiceZoom > 0) { indiceZoom -= 1; aplicarZoom(); } });
+  el('btnZoomMais').addEventListener('click', () => { if (indiceZoom < NIVEIS_ZOOM.length - 1) { indiceZoom += 1; aplicarZoom(); } });
+  el('btnZoomPadrao').addEventListener('click', () => { indiceZoom = NIVEIS_ZOOM.indexOf(1); aplicarZoom(); });
+  window.addEventListener('resize', aplicarZoom);
+  aplicarZoom();
+
+  /* ----------------------------- Tela cheia ----------------------------- */
+  /* Depois da habilitação, a página fica coberta por um botão de tela cheia. Antes dela não: o login e
+   * a saída da conta Google abrem outras janelas. Se o aluno sair da tela cheia (gesto de voltar,
+   * trocar de app...), a cobertura volta e só some ao entrar de novo; o que já foi marcado continua lá.
+   * Se o navegador não permitir tela cheia, a cobertura não aparece, para não travar a consulta. */
+  const elementoTelaCheia = document.documentElement;
+  let telaCheiaPermitida = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+  let tabletLiberado = false;
+  let jaEsteveEmTelaCheia = false;
+  const estaEmTelaCheia = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+
+  function atualizarTelaCheia() {
+    const dentro = estaEmTelaCheia();
+    if (dentro) jaEsteveEmTelaCheia = true;
+    el('telaCheiaTexto').textContent = jaEsteveEmTelaCheia
+      ? 'A consulta saiu da tela cheia. Toque no botão para voltar e continuar.'
+      : 'Toque no botão para abrir a consulta em tela cheia.';
+    el('telaCheia').hidden = !tabletLiberado || !telaCheiaPermitida || dentro;
+  }
+
+  async function entrarEmTelaCheia() {
+    const pedido = (async () => {
+      if (elementoTelaCheia.requestFullscreen) await elementoTelaCheia.requestFullscreen({ navigationUI: 'hide' });
+      else if (elementoTelaCheia.webkitRequestFullscreen) elementoTelaCheia.webkitRequestFullscreen();
+      else throw new Error('Tela cheia indisponível.');
+    })();
+    /* Alguns ambientes deixam o pedido pendente para sempre: depois de 2 s sem tela cheia,
+     * a cobertura sai para não travar a consulta. */
+    const limite = new Promise(resolve => setTimeout(resolve, 2000));
+    try { await Promise.race([pedido, limite]); } catch (erro) { console.warn('Tela cheia recusada.', erro); }
+    if (!estaEmTelaCheia()) {
+      console.warn('Tela cheia indisponível neste navegador; a consulta segue sem ela.');
+      telaCheiaPermitida = false;
+    }
+    atualizarTelaCheia();
+  }
+
+  el('btnTelaCheia').addEventListener('click', entrarEmTelaCheia);
+  document.addEventListener('fullscreenchange', atualizarTelaCheia);
+  document.addEventListener('webkitfullscreenchange', atualizarTelaCheia);
+  atualizarTelaCheia();
+
+  /* ----------------------------- Modal genérico ----------------------------- */
+  function abrirModal(titulo, corpo, botoes) {
+    el('modalTitulo').textContent = titulo;
+    const area = el('modalCorpo');
+    area.innerHTML = '';
+    if (typeof corpo === 'string') area.innerHTML = corpo; else if (corpo) area.appendChild(corpo);
+    montarBotoes(el('modalBotoes'), botoes, botao => { if (botao.manterAberto !== true) fecharModal(); });
+    el('modal').hidden = false;
+  }
+  function montarBotoes(barra, botoes, antesDaAcao) {
+    barra.innerHTML = '';
+    botoes.forEach(botao => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'botao ' + (botao.classe || 'secundario');
+      b.textContent = botao.rotulo;
+      b.addEventListener('click', () => { antesDaAcao(botao); if (botao.acao) botao.acao(); });
+      barra.appendChild(b);
+    });
+  }
+  function fecharModal() { el('modal').hidden = true; }
+  function confirmar(titulo, texto, rotuloSim, classeSim) {
+    return new Promise(resolve => abrirModal(titulo, `<p>${esc(texto)}</p>`, [
+      { rotulo: 'Cancelar', acao: () => resolve(false) },
+      { rotulo: rotuloSim || 'Confirmar', classe: classeSim || 'primario', acao: () => resolve(true) }
+    ]));
+  }
+
+  /* ----------------------------- Tela 1: provas abertas ----------------------------- */
+  async function carregarProvas(aviso) {
+    reiniciarSessao();
+    mostrarTela('telaProvas');
+    el('avisoProvas').hidden = !aviso;
+    el('avisoProvas').textContent = aviso || '';
+    const lista = el('listaProvas');
+    try {
+      const r = await chamar('listarConsultasAbertas', [], 'Buscando provas abertas...');
+      if (r.status !== 'ok') throw new Error(r.mensagem);
+      estado.consultas = r.consultas || [];
+      /* Caso comum: uma única prova aberta (uma turma por vez). Vai direto para o código ou para a câmera;
+       * "Sair", "Concluir" e a inatividade também voltam para essa tela. Com a câmera, a prova escolhida
+       * pelo professor continua valendo para os próximos alunos. */
+      const anterior = usaCamera() ? estado.consultas.find(consulta => consulta.id === camera.pubId) : null;
+      if (anterior || estado.consultas.length === 1) {
+        estado.pub = anterior || estado.consultas[0];
+        irParaEntrada(aviso);
+        return;
+      }
+      if (!estado.consultas.length) {
+        lista.innerHTML = '<div class="vazio">Nenhuma consulta aberta no momento.<br>Peça ao professor para publicar a consulta.</div>';
+        return;
+      }
+      lista.innerHTML = estado.consultas.map((consulta, indice) =>
+        `<button class="cartao-prova" type="button" data-indice="${indice}"><strong>${esc(consulta.prova)}</strong>` +
+        `<span>${consulta.turma ? 'Turma ' + esc(consulta.turma) + ' · ' : ''}${esc(consulta.nAlunos)} prova(s) · publicada em ${esc(consulta.publicadoEm)}</span></button>`
+      ).join('');
+    } catch (erro) {
+      lista.innerHTML = `<div class="vazio">Não foi possível carregar as provas.<br>${esc(erro.message || erro)}</div>`;
+    }
+  }
+
+  el('listaProvas').addEventListener('click', evento => {
+    const cartao = evento.target.closest('.cartao-prova');
+    if (!cartao) return;
+    estado.pub = estado.consultas[Number(cartao.dataset.indice)];
+    irParaEntrada();
+  });
+  el('btnAtualizarLista').addEventListener('click', () => carregarProvas());
+
+  function irParaEntrada(aviso) {
+    if (usaCamera()) abrirCamera(aviso);
+    else abrirTelaCodigo('', aviso);
+  }
+
+  /* ----------------------------- Tela 2: código ----------------------------- */
+  function abrirTelaCodigo(mensagemErro, aviso) {
+    estado.codigo = '';
+    estado.entrando = false;
+    el('tituloCodigo').textContent = estado.pub.prova;
+    el('avisoCodigo').hidden = !aviso;
+    el('avisoCodigo').textContent = aviso || '';
+    el('erroCodigo').textContent = mensagemErro || '';
+    el('btnVoltarProvas').hidden = !usaCamera() && estado.consultas.length <= 1;   /* com uma só prova não há lista para voltar */
+    atualizarVisorCodigo();
+    mostrarTela('telaCodigo');
+  }
+
+  function atualizarVisorCodigo() {
+    el('visorCodigo').innerHTML = Array.from({ length: 6 }, (_, i) => {
+      const digito = estado.codigo[i];
+      return `<span class="${digito ? 'cheio' : ''}">${digito ? '•' : ''}</span>`;
+    }).join('');
+    el('btnEntrar').disabled = estado.codigo.length !== 6;
+  }
+
+  function digitarCodigo(tecla) {
+    if (estado.entrando) return;
+    el('erroCodigo').textContent = '';
+    el('avisoCodigo').hidden = true;
+    if (tecla === 'apagar') estado.codigo = estado.codigo.slice(0, -1);
+    else if (tecla === 'limpar') estado.codigo = '';
+    else if (/^\d$/.test(tecla) && estado.codigo.length < 6) estado.codigo += tecla;
+    atualizarVisorCodigo();
+    /* Entra sozinho ao completar os 6 dígitos (a pausa deixa o último ponto aparecer). */
+    if (estado.codigo.length === 6) setTimeout(entrar, 150);
+  }
+
+  el('tecladoCodigo').innerHTML = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'limpar', '0', 'apagar']
+    .map(tecla => `<button type="button" data-tecla="${tecla}" class="${tecla.length > 1 ? 'tecla-acao' : ''}">${tecla === 'apagar' ? '⌫' : tecla === 'limpar' ? 'Limpar' : tecla}</button>`)
+    .join('');
+  el('tecladoCodigo').addEventListener('click', evento => {
+    const botao = evento.target.closest('button[data-tecla]');
+    if (botao) digitarCodigo(botao.dataset.tecla);
+  });
+  document.addEventListener('keydown', evento => {
+    if (el('telaCodigo').hidden || !el('modal').hidden) return;
+    if (/^\d$/.test(evento.key)) digitarCodigo(evento.key);
+    else if (evento.key === 'Backspace') digitarCodigo('apagar');
+    else if (evento.key === 'Enter' && estado.codigo.length === 6) entrar();
+  });
+  el('btnVoltarProvas').addEventListener('click', () => { if (usaCamera()) { camera.retirar = false; abrirCamera(); } else carregarProvas(); });
+  el('btnEntrar').addEventListener('click', () => entrar());
+
+  /* peloQR: o código veio da folha, não foi digitado, então não há o que confirmar. */
+  async function entrar(peloQR) {
+    if (estado.entrando || estado.codigo.length !== 6 || (!peloQR && el('telaCodigo').hidden)) return;
+    estado.entrando = true;
+    const voltarComAviso = mensagem => {
+      if (peloQR) { camera.leitura = null; abrirCamera(mensagem); } else abrirTelaCodigo(mensagem);
+    };
+    try {
+      const r = await chamar('entrarNaConsulta', [estado.pub.id, estado.codigo], 'Conferindo o código...');
+      if (r.status !== 'ok') { voltarComAviso(r.mensagem); return; }
+      estado.dados = r;
+      if (peloQR || modo === 'massa') { abrirRespostas(); return; }
+      el('nomeConfirmar').textContent = r.nome;
+      mostrarTela('telaConfirmar');
+    } catch (erro) {
+      voltarComAviso('Falha de conexão. Tente de novo.');
+    } finally {
+      estado.entrando = false;
+    }
+  }
+
+  /* ----------------------------- Tela 3: confirmação ----------------------------- */
+  el('btnNaoSouEu').addEventListener('click', () => { estado.dados = null; abrirTelaCodigo(); });
+  el('btnSouEu').addEventListener('click', abrirRespostas);
+
+  function abrirRespostas() {
+    const d = estado.dados;
+    estado.marcadas = new Map(d.marcadas || []);
+    estado.duvidas = new Map();
+    estado.resultado = d.entregue && d.resultado ? { porChave: d.resultado.porChave } : null;
+    estado.nota = d.resultado ? d.resultado.nota : null;
+    estado.notasQuestoes = d.resultado ? (d.resultado.questoes || []) : [];
+    estado.alterado = false;
+    saidas.total = Number(d.saidas) || 0;
+    el('nomeAluno').textContent = d.nome;
+    mostrarResultado(d.entregue ? 'Esta prova já foi entregue.' : '', '');
+    const lida = camera.leitura && !d.entregue;
+    if (lida) aplicarLeitura(camera.leitura, d);
+    camera.leitura = null;
+    renderizar();
+    atualizarAvisoLeitura(Boolean(lida));
+    mostrarTela('telaRespostas');
+    manterTelaLigada();
+    registrarAtividade();
+    /* A tabela numérica é longa: leva o aluno direto à primeira dúvida. */
+    const primeiraDuvida = el('tabelas').querySelector('td.duvida');
+    if (primeiraDuvida) primeiraDuvida.scrollIntoView({ block: 'center' });
+  }
+
+  /* Transforma o que a câmera leu nas marcações da tela. A folha é a referência: o que está nela substitui
+   * as marcações salvas. Em casos de dúvida (marca fraca ou ambígua), o quesito fica sem marcação por
+   * padrão, destacando apenas em laranja para conferência. Como caneta não apaga, depois de um feedback a
+   * coluna pode ter duas marcas fortes: se uma delas é a resposta anterior, a outra é assumida como nova. */
+  function aplicarLeitura(leitura, d) {
+    const anteriores = new Map(d.marcadas || []);
+    const marcadas = new Map(), duvidas = new Map();
+    const naTabela = valor => d.valores.some(opcao => iguaisNumerico(valor, opcao.v));
+    const lidas = new Map(leitura.colunas.map(coluna => [normalizarRotulo(coluna.r), coluna]));
+    d.colunas.forEach(coluna => {
+      const c = coluna.c, lida = lidas.get(normalizarRotulo(coluna.r));
+      const anterior = anteriores.get(c);
+      if (!lida) { duvidas.set(c, { nda: Boolean(coluna.s), linhas: [] }); return; }
+      if (coluna.s) {
+        if (lida.tipo === 'nda') {
+          if (anteriores.has(c)) marcadas.set(c, anterior);
+          else duvidas.set(c, { nda: true, linhas: [] });
+        } else if (lida.tipo !== 'branco' || lida.nda) {
+          duvidas.set(c, { nda: true, linhas: [] });
+        }
+        return;
+      }
+      const valores = lida.linhas.map(linha => (d.valores[linha] ? d.valores[linha].v : undefined));
+      if (lida.tipo === 'nda') {
+        if (anteriores.has(c) && !naTabela(anterior)) marcadas.set(c, anterior);
+        else duvidas.set(c, { nda: true, linhas: [] });
+      } else if (lida.tipo === 'uma' && valores[0] !== undefined) {
+        marcadas.set(c, valores[0]);
+      } else if (lida.tipo === 'dupla' && valores.length === 2 && valores.every(v => v !== undefined) && valores.some(v => iguaisNumerico(anterior, v))) {
+        marcadas.set(c, iguaisNumerico(anterior, valores[0]) ? valores[1] : valores[0]);
+        duvidas.set(c, { linhas: lida.linhas });
+      } else if (lida.tipo !== 'branco') {
+        duvidas.set(c, { nda: Boolean(lida.nda), linhas: lida.linhas });
+      }
+    });
+    const lidasVF = new Map(leitura.vf.map(item => [normalizarRotulo(item.r), item.valor]));
+    d.vf.forEach((linha, indice) => {
+      const c = linha.c;
+      const valor = lidasVF.has(normalizarRotulo(linha.r)) ? lidasVF.get(normalizarRotulo(linha.r)) : (leitura.vf[indice] ? leitura.vf[indice].valor : '?');
+      if (valor === 'V' || valor === 'F') marcadas.set(c, valor === 'V');
+      else if (valor === 'VF' && anteriores.has(c)) { marcadas.set(c, !anteriores.get(c)); duvidas.set(c, { vf: true }); }
+      else if (valor !== '') duvidas.set(c, { vf: true });
+    });
+    estado.marcadas = marcadas;
+    estado.duvidas = duvidas;
+    estado.alterado = true;
+  }
+
+  function normalizarRotulo(rotulo) {
+    return String(rotulo || '').replace(/[^a-z0-9]/gi, '').toUpperCase();
+  }
+
+  function atualizarAvisoLeitura(acabouDeLer) {
+    const d = estado.dados;
+    const aviso = el('avisoLeitura');
+    if (d && estado.duvidas.size) {
+      const rotulos = [...d.colunas, ...d.vf].filter(item => estado.duvidas.has(item.c)).map(item => item.r);
+      const obs = [...estado.duvidas.keys()].every(c => !estado.marcadas.has(c)) ? ' (deixados sem marcação por padrão)' : '';
+      aviso.textContent = `A câmera ficou em dúvida em ${rotulos.join(', ')}${obs}. Confira as células em laranja e toque para marcar se necessário.`;
+      aviso.hidden = false;
+    } else if (acabouDeLer) {
+      aviso.textContent = 'Folha lida. Confira se está tudo igual à folha antes de enviar.';
+      aviso.hidden = false;
+    } else if (aviso.textContent.startsWith('A câmera')) {
+      aviso.hidden = true;
+    }
+  }
+
+  /* ----------------------------- Tela 4: respostas ----------------------------- */
+  function iguaisNumerico(marcada, valor) {
+    return marcada !== null && marcada !== undefined && Number(marcada) === valor;
+  }
+
+  function textoDoValor(valor) {
+    if (valor === null) return '—';
+    return String(valor).replace('.', ',');
+  }
+
+  function renderizar() {
+    const d = estado.dados;
+    const bloqueado = d.entregue || estado.enviando;
+    const restantes = Math.max(0, d.feedbacksPermitidos - d.feedbacksUsados);
+    let html = '';
+
+    if (d.colunas.length) {
+      html += '<section class="cartao-tabela num"><h3>Gabarito numérico</h3><div class="rolagem"><table class="tabela-num"><thead><tr>' +
+        '<th class="fixa">Respostas ⇩ / Questões ⇒</th>' +
+        d.colunas.map((coluna, colIndice) => `<th${colIndice % 2 === 1 ? ' class="col-par"' : ''}>${esc(coluna.r)}</th>`).join('') +
+        '</tr></thead><tbody>';
+      d.valores.forEach((opcao, indice) => {
+        html += `<tr><th class="fixa">${esc(opcao.t)}</th>` + d.colunas.map((coluna, colIndice) => {
+          if (coluna.s) return '<td class="vazia"></td>';
+          const par = colIndice % 2 === 1;
+          const marcada = estado.marcadas.has(coluna.c) && iguaisNumerico(estado.marcadas.get(coluna.c), opcao.v);
+          const duvida = estado.duvidas.get(coluna.c);
+          const emDuvida = duvida && duvida.linhas && duvida.linhas.includes(indice);
+          return `<td class="celula${par ? ' col-par' : ''}${marcada ? ' marcada' : ''}${emDuvida ? ' duvida' : ''}" data-c="${esc(coluna.c)}" data-op="${indice}">${marcada ? 'X' : ''}</td>`;
+        }).join('') + '</tr>';
+      });
+      html += '<tr class="linha-nda"><th class="fixa">N.D.A.<small>toque e digite o valor</small></th>' + d.colunas.map((coluna, colIndice) => {
+        const par = colIndice % 2 === 1;
+        const tem = estado.marcadas.has(coluna.c);
+        const valor = estado.marcadas.get(coluna.c);
+        const ehNDA = tem && (coluna.s || !d.valores.some(opcao => iguaisNumerico(valor, opcao.v)));
+        const duvida = estado.duvidas.get(coluna.c);
+        return `<td class="celula${par ? ' col-par' : ''}${ehNDA ? ' marcada' : ''}${duvida && duvida.nda ? ' duvida' : ''}" data-c="${esc(coluna.c)}" data-nda="1">${ehNDA ? esc(textoDoValor(valor)) : ''}</td>`;
+      }).join('') + '</tr></tbody></table></div></section>';
+    }
+
+    if (d.vf.length) {
+      html += '<section class="cartao-tabela"><h3>Gabarito V ou F</h3><div class="rolagem"><table class="tabela-vf"><thead><tr><th class="fixa">Questão</th><th>V</th><th>F</th></tr></thead><tbody>' +
+        d.vf.map(linha => `<tr><th class="fixa">${esc(linha.r)}</th>` + [true, false].map(valor => {
+          const marcada = estado.marcadas.has(linha.c) && estado.marcadas.get(linha.c) === valor;
+          const duvida = estado.duvidas.has(linha.c);
+          return `<td class="celula${marcada ? ' marcada' : ''}${duvida ? ' duvida' : ''}" data-c="${esc(linha.c)}" data-vf="${valor}">${marcada ? 'X' : ''}</td>`;
+        }).join('') + '</tr>').join('') + '</tbody></table></div></section>';
+    }
+
+    /* Redesenhar recria as áreas com rolagem; guarda e devolve a posição para o aluno
+     * poder marcar várias respostas em sequência sem a tabela voltar ao topo. */
+    const area = el('tabelas');
+    const rolagens = Array.from(area.querySelectorAll('.rolagem')).map(r => [r.scrollTop, r.scrollLeft]);
+    const rolagemPagina = window.scrollY;
+    area.innerHTML = html || '<div class="vazio">Esta prova não possui respostas para consulta.</div>';
+    area.querySelectorAll('.rolagem').forEach((r, i) => {
+      if (rolagens[i]) { r.scrollTop = rolagens[i][0]; r.scrollLeft = rolagens[i][1]; }
+    });
+    if (window.scrollY !== rolagemPagina) window.scrollTo(0, rolagemPagina);
+    area.classList.toggle('bloqueada', bloqueado);
+
+    if (estado.resultado) {
+      area.querySelectorAll('td.marcada').forEach(celula => {
+        const acertou = estado.resultado.porChave[celula.dataset.c];
+        if (acertou === true) celula.classList.add('correta');
+        else if (acertou === false) celula.classList.add('incorreta');
+      });
+    }
+
+    const chip = el('statusFeedback');
+    chip.textContent = d.entregue ? 'Prova entregue' : modo === 'massa' ? 'Correção em massa' : `Feedbacks disponíveis: ${restantes} de ${d.feedbacksPermitidos}`;
+    chip.classList.toggle('entregue', !!d.entregue);
+
+    el('btnFeedback').hidden = !!d.entregue || modo === 'massa';
+    el('btnEntregar').hidden = !!d.entregue;
+    el('btnVerNota').hidden = !d.entregue || !estado.nota;
+    el('btnConcluir').hidden = !d.entregue;
+    el('btnFeedback').disabled = bloqueado || restantes <= 0;
+    el('btnFeedback').textContent = restantes > 0 ? `Pedir feedback (${restantes})` : 'Sem feedbacks restantes';
+    el('btnEntregar').disabled = bloqueado;
+    el('btnEntregar').textContent = estado.enviando ? 'Enviando...' : modo === 'massa' ? 'Salvar a correção' : 'Entregar a prova';
+  }
+
+  function mostrarResultado(texto, tipo) {
+    const area = el('resultado');
+    area.textContent = texto || '';
+    area.className = 'resultado' + (tipo === 'erro' ? ' erro-msg' : tipo === 'ok' && texto ? ' ok-msg' : '');
+  }
+
+  /* porChave do feedback só traz os quesitos numéricos: o V/F vem apenas em contagem (r.vf). */
+  function mostrarFeedback(r, restantes) {
+    const d = estado.dados;
+    const contagem = (valor, singular, plural, classe) =>
+      `<li class="contagem ${classe}"><strong>${valor}</strong>${valor === 1 ? singular : plural}</li>`;
+    const bloco = (classe, titulo, contagens, legenda, rotuloDaLista, itens) => {
+      const faltando = itens.filter(item => !estado.marcadas.has(item.c)).map(item => `<span class="rotulo-quesito">${esc(item.r)}</span>`);
+      return `<section class="bloco-feedback ${classe}"><h3>${titulo}</h3><ul class="contagens">${contagens}</ul>` +
+        `<p class="legenda-feedback">${legenda}</p>` +
+        (faltando.length ? `<p class="sem-marcacao"><span>${rotuloDaLista}</span>${faltando.join('')}</p>` : '') + '</section>';
+    };
+    const blocos = [];
+    if (d.colunas.length) {
+      const respostas = Object.values(r.porChave);
+      const corretas = respostas.filter(Boolean).length;
+      const semMarcacao = d.colunas.filter(item => !estado.marcadas.has(item.c)).length;
+      blocos.push(bloco('', 'Gabarito numérico',
+        contagem(corretas, 'correta', 'corretas', 'certo') + contagem(respostas.length - corretas, 'incorreta', 'incorretas', 'errado') +
+        contagem(semMarcacao, 'sem marcação', 'sem marcação', 'branco'),
+        'Na tabela: verde = correta, vermelho = incorreta.', 'Não pontuam:', d.colunas));
+    }
+    if (r.temVF) {
+      blocos.push(bloco('vf', 'Verdadeiro ou falso',
+        contagem(r.vf.acertos, 'acerto', 'acertos', 'certo') + contagem(r.vf.erros, 'erro', 'erros', 'errado') +
+        contagem(r.vf.emBranco, 'em branco', 'em branco', 'branco'),
+        'Em branco não conta. Cada erro cancela um acerto.', 'Em branco:', d.vf));
+    }
+    const area = el('resultado');
+    area.className = 'resultado';
+    area.innerHTML = '<div class="feedback"><div class="feedback-topo"><span>Feedback registrado</span>' +
+      `<span class="feedback-restam">${restantes === 1 ? 'Resta 1 feedback' : `Restam ${restantes} feedbacks`}</span></div>` +
+      `<div class="blocos-feedback">${blocos.join('')}</div></div>`;
+  }
+
+  el('tabelas').addEventListener('click', evento => {
+    const celula = evento.target.closest('td.celula');
+    const d = estado.dados;
+    if (!celula || d.entregue || estado.enviando) return;
+    const chave = celula.dataset.c;
+    estado.resultado = null;
+    mostrarResultado('', '');
+    if (estado.duvidas.delete(chave)) atualizarAvisoLeitura();
+
+    if (celula.classList.contains('marcada') && !celula.dataset.nda) {
+      estado.marcadas.delete(chave);
+      estado.alterado = true;
+      renderizar();
+      return;
+    }
+    if (celula.dataset.nda) {
+      abrirTecladoDeValor(chave, celula.classList.contains('marcada'));
+      return;
+    }
+    if (celula.dataset.vf) estado.marcadas.set(chave, celula.dataset.vf === 'true');
+    else estado.marcadas.set(chave, d.valores[Number(celula.dataset.op)].v);
+    estado.alterado = true;
+    renderizar();
+  });
+
+  /* Teclado numérico próprio (N.D.A.): dígitos, vírgula, sinal e apagar. Igual em qualquer tablet. */
+  function abrirTecladoDeValor(chave, jaMarcada) {
+    const atual = estado.marcadas.get(chave);
+    let texto = jaMarcada && typeof atual === 'number' ? String(atual).replace('.', ',') : '';
+    const corpo = document.createElement('div');
+    corpo.innerHTML = '<p>Digite o valor que você escreveu na folha. Se marcou N.D.A. sem escrever valor, deixe vazio e confirme.</p>' +
+      '<div class="visor-valor" id="visorValor"></div><div class="teclado" id="tecladoValor"></div><p class="erro" id="erroValor"></p>';
+    const visor = corpo.querySelector('#visorValor');
+    const teclado = corpo.querySelector('#tecladoValor');
+    const atualizar = () => {
+      visor.textContent = texto || 'vazio (N.D.A. sem valor)';
+      visor.classList.toggle('vazio-valor', !texto);
+    };
+    teclado.innerHTML = ['7', '8', '9', '4', '5', '6', '1', '2', '3', 'sinal', '0', 'virgula', 'apagar']
+      .map(tecla => `<button type="button" data-tecla="${tecla}" class="${tecla.length > 1 ? 'tecla-acao' : ''}${tecla === 'apagar' ? ' largo' : ''}">${{ sinal: '+/−', virgula: ',', apagar: '⌫ apagar' }[tecla] || tecla}</button>`)
+      .join('');
+    teclado.addEventListener('click', evento => {
+      const botao = evento.target.closest('button[data-tecla]');
+      if (!botao) return;
+      corpo.querySelector('#erroValor').textContent = '';
+      const tecla = botao.dataset.tecla;
+      if (tecla === 'apagar') texto = texto.slice(0, -1);
+      else if (tecla === 'sinal') texto = texto.startsWith('-') ? texto.slice(1) : '-' + texto;
+      else if (tecla === 'virgula') { if (!texto.includes(',')) texto = (texto === '' || texto === '-' ? texto + '0' : texto) + ','; }
+      else if (texto.replace(/[^0-9]/g, '').length < 15) texto += tecla;
+      atualizar();
+    });
+    atualizar();
+
+    const botoes = [{ rotulo: 'Cancelar' }];
+    if (jaMarcada) botoes.push({ rotulo: 'Desmarcar', acao: () => { estado.marcadas.delete(chave); estado.alterado = true; renderizar(); } });
+    botoes.push({
+      rotulo: 'Confirmar', classe: 'primario', manterAberto: true, acao: () => {
+        let valor = null;
+        if (texto !== '') {
+          valor = Number(texto.replace(',', '.'));
+          if (!isFinite(valor) || texto === '-' || texto.endsWith(',')) { corpo.querySelector('#erroValor').textContent = 'Valor incompleto.'; return; }
+        }
+        estado.marcadas.set(chave, valor);
+        estado.alterado = true;
+        fecharModal();
+        renderizar();
+      }
+    });
+    abrirModal('Valor da resposta (N.D.A.)', corpo, botoes);
+  }
+
+  async function enviar(acao) {
+    const d = estado.dados;
+    let salvaNaMassa = null;
+    estado.enviando = true;
+    renderizar();
+    mostrarResultado(acao === 'feedback' ? 'Corrigindo...' : 'Registrando a entrega...', '');
+    try {
+      const r = await chamar('enviarRespostasDaConsulta',
+        [estado.pub.id, estado.codigo, JSON.stringify(Array.from(estado.marcadas.entries())), acao],
+        acao === 'feedback' ? 'Corrigindo...' : 'Entregando a prova...');
+      if (r.status !== 'ok') { mostrarResultado(r.mensagem, 'erro'); return; }
+      estado.alterado = false;
+      estado.resultado = { porChave: r.porChave || {} };
+      if (acao === 'feedback') {
+        d.feedbacksUsados = r.feedbacksUsados;
+        mostrarFeedback(r, Math.max(0, r.feedbacksPermitidos - r.feedbacksUsados));
+        setTimeout(() => el('resultado').scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      } else if (modo === 'massa') {
+        salvaNaMassa = r;
+      } else {
+        d.entregue = true;
+        estado.nota = r.nota;
+        estado.notasQuestoes = r.questoes || [];
+        mostrarResultado('Prova entregue com sucesso.', 'ok');
+        abrirModal('Prova entregue!', '<p>Suas respostas foram registradas. Deseja ver sua nota agora?</p>', [
+          { rotulo: 'Agora não' },
+          { rotulo: 'Ver nota', classe: 'primario', acao: mostrarNota }
+        ]);
+      }
+    } catch (erro) {
+      mostrarResultado('Falha de conexão. Suas marcações continuam aqui; tente de novo.', 'erro');
+    } finally {
+      estado.enviando = false;
+      renderizar();
+    }
+    if (salvaNaMassa) {
+      folhaSalva(estado.codigo, d.nome, salvaNaMassa.nota);
+      carregarProvas();
+    }
+  }
+
+  function mostrarNota() {
+    const lista = (estado.notasQuestoes || [])
+      .map(questao => `<li><span>${esc(questao.rotulo)}</span><strong>${esc(questao.nota)}</strong></li>`).join('');
+    abrirModal('Sua nota',
+      `<div class="nota-grande">${esc(estado.nota)}</div><p class="nota-legenda">nota final (de 0 a 10)</p>` +
+      (lista ? `<ul class="notas-questoes" aria-label="Nota de cada questão">${lista}</ul>` : ''),
+      [{ rotulo: 'Fechar', classe: 'primario' }]);
+  }
+
+  el('btnFeedback').addEventListener('click', () => enviar('feedback'));
+  /* Rótulos (06D, 07M...) dos quesitos exibidos que o aluno ainda não marcou. */
+  function quesitosSemMarcacao() {
+    const d = estado.dados;
+    if (!d) return [];
+    return [...d.colunas, ...d.vf].filter(item => !estado.marcadas.has(item.c)).map(item => item.r);
+  }
+
+  el('btnEntregar').addEventListener('click', async () => {
+    if (modo === 'massa') { enviar('entregar'); return; }
+    const faltando = quesitosSemMarcacao();
+    const aviso = faltando.length
+      ? `Atenção: você não marcou ${faltando.join(', ')}. Quesitos sem marcação não pontuam. `
+      : '';
+    const ok = await confirmar('Entregar a prova?', aviso + 'Depois de entregar você não poderá mais alterar as marcações nem pedir feedbacks.', 'Entregar', 'perigo');
+    if (ok) enviar('entregar');
+  });
+  el('btnVerNota').addEventListener('click', mostrarNota);
+  el('btnConcluir').addEventListener('click', () => carregarProvas());
+
+  /* ----------------------------- Registro de saídas da consulta ----------------------------- */
+  /* Conta quando o aluno sai da consulta durante a prova: a página fica escondida (trocou de app,
+   * voltou à tela inicial ou a tela apagou) ou ele sai da tela cheia. As duas coisas quase juntas
+   * contam como uma saída só. O total vai para a coluna K da aba Provas; o horário e a duração
+   * de cada saída ficam na nota da célula. */
+  const saidas = { atual: null, pendentes: [], enviando: false, total: 0, sessao: 0, ultimoFimApp: 0 };
+  let travaTela = null;
+
+  function sessaoAtiva() {
+    return !!(modo !== 'massa' && estado.dados && !estado.dados.entregue && !el('telaRespostas').hidden && estado.pub && estado.codigo);
+  }
+
+  function iniciarSaida(tipo) {
+    if (!sessaoAtiva()) return;
+    const agora = Date.now();
+    if (tipo === 'telaCheia' && agora - saidas.ultimoFimApp < 3000) return;   /* eco da volta ao app */
+    if (saidas.atual && agora - saidas.atual.inicio < 3000) {
+      if (tipo === 'app') saidas.atual.tipo = 'app';
+      return;
+    }
+    if (saidas.atual) concluirSaida();
+    const saida = { tipo: tipo, inicio: agora };
+    saidas.atual = saida;
+    if (tipo === 'telaCheia') {
+      setTimeout(() => { if (saidas.atual === saida && saida.tipo === 'telaCheia') concluirSaida(); }, 3000);
+    }
+  }
+
+  function concluirSaida() {
+    const saida = saidas.atual;
+    if (!saida) return;
+    saidas.atual = null;
+    if (saida.tipo === 'app') saidas.ultimoFimApp = Date.now();
+    saidas.pendentes.push({
+      tipo: saida.tipo,
+      inicio: saida.inicio,
+      segundos: saida.tipo === 'app' ? Math.round((Date.now() - saida.inicio) / 1000) : null
+    });
+    enviarSaidas();
+  }
+
+  function enviarSaidas() {
+    if (!saidas.pendentes.length || saidas.enviando || document.hidden || !estado.pub || !estado.codigo) return;
+    const lote = saidas.pendentes.splice(0);
+    const sessao = saidas.sessao;
+    const tentarDeNovo = () => {
+      if (sessao !== saidas.sessao) return;
+      saidas.pendentes.unshift(...lote);
+      setTimeout(enviarSaidas, 5000);
+    };
+    saidas.enviando = true;
+    pedirAoGAS('registrarSaidaDaConsulta', [estado.pub.id, estado.codigo, JSON.stringify(lote)]).then(
+      retorno => {
+        if (sessao !== saidas.sessao) return;   /* outro aluno já entrou */
+        saidas.enviando = false;
+        let r = {};
+        try { r = JSON.parse(retorno); } catch (erro) { /* resposta inválida: descarta */ }
+        if (r.status === 'ok') { saidas.total = r.saidas; avisarSaida(); }
+        else if (r.tentarDeNovo) tentarDeNovo();
+      },
+      () => { if (sessao === saidas.sessao) { saidas.enviando = false; tentarDeNovo(); } }
+    );
+  }
+
+  function avisarSaida() {
+    if (!sessaoAtiva()) return;
+    mostrarResultado(`Saída da consulta registrada (${saidas.total} no total). O professor vê esse registro.`, 'erro');
+    if (!el('telaCheia').hidden) el('telaCheiaTexto').textContent = 'Você saiu da consulta e isso foi registrado. Toque no botão para voltar e continuar.';
+  }
+
+  /* Pede ao tablet para não apagar a tela durante a consulta (evita registrar saídas falsas
+   * quando o aluno fica só lendo a folha). Se o navegador não deixar, segue sem isso. */
+  async function manterTelaLigada() {
+    if ((!sessaoAtiva() && !camera.ciclo) || travaTela || document.hidden || !('wakeLock' in navigator)) return;
+    try {
+      travaTela = await navigator.wakeLock.request('screen');
+      travaTela.addEventListener('release', () => { travaTela = null; });
+    } catch (erro) { travaTela = null; }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { iniciarSaida('app'); return; }
+    if (saidas.atual && saidas.atual.tipo === 'app') concluirSaida(); else enviarSaidas();
+    manterTelaLigada();
+  });
+  function aoMudarTelaCheia() { if (!estaEmTelaCheia() && jaEsteveEmTelaCheia) iniciarSaida('telaCheia'); }
+  document.addEventListener('fullscreenchange', aoMudarTelaCheia);
+  document.addEventListener('webkitfullscreenchange', aoMudarTelaCheia);
+
+  /* ----------------------------- Saída e inatividade ----------------------------- */
+  function reiniciarSessao() {
+    /* Envia o que estiver pendente do aluno anterior antes de limpar. */
+    if (saidas.atual) concluirSaida();
+    enviarSaidas();
+    saidas.sessao += 1; saidas.atual = null; saidas.pendentes = []; saidas.enviando = false; saidas.total = 0;
+    if (travaTela) { travaTela.release().catch(() => {}); travaTela = null; }
+    fecharModal();
+    camera.retirar = false; camera.posicaoLida = null;
+    estado.pub = null; estado.codigo = ''; estado.dados = null; estado.marcadas = new Map(); estado.duvidas = new Map();
+    estado.resultado = null; estado.enviando = false; estado.alterado = false; estado.nota = null; estado.notasQuestoes = [];
+    el('tabelas').innerHTML = '';
+    el('avisoLeitura').hidden = true;
+    mostrarResultado('', '');
+  }
+
+  el('btnSair').addEventListener('click', async () => {
+    if (estado.alterado && estado.dados && !estado.dados.entregue) {
+      const ok = await confirmar('Sair?', 'As marcações que você ainda não enviou serão perdidas.', 'Sair', 'perigo');
+      if (!ok) return;
+    }
+    carregarProvas();
+  });
+
+  function registrarAtividade() {
+    clearTimeout(temporizadorInatividade);
+    temporizadorInatividade = setTimeout(() => {
+      const emEspera = ['telaHabilitar', 'telaSairDaConta', 'telaModo', 'telaProvas', 'telaCamera'].some(tela => !el(tela).hidden);
+      if (!emEspera && !estado.enviando) carregarProvas('A sessão anterior foi encerrada por inatividade.');
+    }, TEMPO_INATIVIDADE_MS);
+  }
+  ['pointerdown', 'keydown'].forEach(tipo => document.addEventListener(tipo, registrarAtividade, { passive: true }));
+
+  /* ----------------------------- Leitura automática pela câmera ----------------------------- */
+  /* O tablet fica no suporte, olhando a mesa. Algumas vezes por segundo a página procura a folha numa
+   * imagem pequena. Quando a folha fica parada, lê a imagem em tamanho maior e abre as respostas do aluno.
+   * Ao sair da consulta de uma prova, sempre lê imediatamente a folha que estiver em frente à câmera. */
+  const CAMERA = {
+    LADO_VERIFICACAO: LEITURA.LADO_BUSCA,
+    LADO_QR: 1100,
+    LADO_LEITURA: 2600,
+    INTERVALO_MS: 250,
+    MOVIMENTO: 0.012,        /* folha "parada": moveu menos que esta fração do maior lado da imagem */
+    QUADROS_PARADOS: 2,      /* verificações seguidas na mesma posição antes de ler */
+    QUADROS_SEM_FOLHA: 2,    /* correção em massa: verificações sem folha para liberar a próxima */
+    PAUSA_RECUSA_MS: 700,    /* espera antes de tentar de novo quando a leitura é recusada */
+    PAUSA_ERRO_MS: 3500,     /* tempo para ler o motivo quando a folha não foi reconhecida */
+    LEITURAS_DIFERENTES: 3   /* correção em massa: quantas vezes lê de novo antes de pedir conferência */
+  };
+  const camera = { fluxo: null, ciclo: null, pubId: null, leitura: null, retirar: false, codigoLido: null, posicaoLida: null };
+  const pausa = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const diagnosticoLigado = new URLSearchParams(location.search).has('diagnostico');
+
+  function mostrarEstadoCamera(texto, classe) {
+    const campo = el('estadoCamera');
+    campo.className = 'estado-camera' + (classe ? ' ' + classe : '');
+    campo.textContent = texto;
+  }
+
+  async function ligarCamera() {
+    if (camera.fluxo) return;
+    camera.fluxo = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 } }
+    });
+    const video = el('video');
+    video.srcObject = camera.fluxo;
+    await video.play();
+  }
+
+  function desligarCamera() {
+    pararEspera();
+    if (camera.fluxo) camera.fluxo.getTracks().forEach(trilha => trilha.stop());
+    camera.fluxo = null;
+    el('video').srcObject = null;
+  }
+
+  function quadroDoVideo(ladoMaximo) {
+    const video = el('video');
+    if (!video.videoWidth) return null;
+    const escala = Math.min(1, ladoMaximo / Math.max(video.videoWidth, video.videoHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(video.videoWidth * escala);
+    canvas.height = Math.round(video.videoHeight * escala);
+    canvas.getContext('2d', { willReadFrequently: true }).drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  async function abrirCamera(aviso) {
+    if (!estado.pub.leitura) {
+      abrirTelaCodigo('', 'Esta prova foi publicada sem as marcas de leitura. Use o código, como no modo manual.');
+      return;
+    }
+    camera.pubId = estado.pub.id;
+    atualizarFaixaMassa();
+    mostrarTela('telaCamera');
+    el('avisoCamera').hidden = !aviso;
+    el('avisoCamera').textContent = aviso || '';
+    mostrarEstadoCamera('Abrindo a câmera…');
+    try {
+      await ligarCamera();
+    } catch (erro) {
+      console.error(erro);
+      mostrarEstadoCamera('A câmera não abriu. Confira a permissão do navegador ou use "Digitar o código".', 'atencao');
+      return;
+    }
+    if (!el('telaCamera').hidden) iniciarEspera();
+  }
+
+  function iniciarEspera() {
+    const ciclo = {};
+    camera.ciclo = ciclo;
+    manterTelaLigada();
+    cicloDeEspera(ciclo);
+  }
+
+  function pararEspera() {
+    camera.ciclo = null;
+  }
+
+  function mesmaPosicao(a, b, fracao) {
+    const limite = a.lado * (fracao || CAMERA.MOVIMENTO);
+    return Math.abs(a.x - b.x) < limite && Math.abs(a.y - b.y) < limite && Math.abs(a.tamanho - b.tamanho) < limite * 2;
+  }
+
+  async function cicloDeEspera(ciclo) {
+    const medidas = estado.pub.leitura;
+    let anterior = null, parados = 0, semFolha = 0, voltas = 0;
+    mostrarEstadoCamera(camera.retirar ? 'Coloque a próxima folha.' : 'Coloque a folha sob a câmera.');
+    while (camera.ciclo === ciclo) {
+      const inicio = performance.now();
+      const quadro = document.hidden || !el('modal').hidden ? null : quadroDoVideo(CAMERA.LADO_VERIFICACAO);
+      if (quadro) {
+        const folha = acharFolhaRapido(quadro, medidas);
+        if (camera.retirar) {
+          semFolha = folha ? 0 : semFolha + 1;
+          voltas += 1;
+          let trocou = Boolean(folha && camera.posicaoLida && !mesmaPosicao(camera.posicaoLida, folha, CAMERA.MOVIMENTO * 3));
+          if (!trocou && folha && voltas % 4 === 0) {
+            const qr = acharQR(quadroDoVideo(CAMERA.LADO_QR));
+            trocou = Boolean(qr && qr.texto !== camera.codigoLido);
+          }
+          if (trocou || semFolha >= CAMERA.QUADROS_SEM_FOLHA) {
+            camera.retirar = false;
+            camera.posicaoLida = null;
+            anterior = null;
+            parados = 0;
+            if (trocou) ocultarCartaoMassa();
+            mostrarEstadoCamera('Coloque a folha sob a câmera.');
+          }
+        } else if (!folha) {
+          anterior = null;
+          parados = 0;
+          esquecerLeituraDaMassa();
+          mostrarEstadoCamera('Coloque a folha sob a câmera.');
+        } else {
+          ocultarCartaoMassa();
+          parados = anterior && mesmaPosicao(anterior, folha) ? parados + 1 : 0;
+          anterior = folha;
+          if (parados >= CAMERA.QUADROS_PARADOS) {
+            parados = 0;
+            await processarFolha(medidas, folha);
+          } else {
+            mostrarEstadoCamera('Folha encontrada: mantenha parada…');
+          }
+        }
+      }
+      await pausa(Math.max(60, CAMERA.INTERVALO_MS - (performance.now() - inicio)));
+    }
+  }
+
+  /* Quando a folha não é reconhecida, o quadro aparece sozinho, com a imagem e os números para investigar. */
+  function mostrarDiagnostico(leitura, quadro) {
+    const campo = el('diagnostico');
+    campo.hidden = !diagnosticoLigado && leitura.erro !== FOLHA_NAO_CONFERE;
+    if (campo.hidden) return;
+    const { colunas, vf, ...resumo } = leitura;
+    const { num, vf: tabelaVF, qr } = estado.pub.leitura;
+    const trilho = grupo => grupo && [grupo.esq, grupo.dir, grupo.ys[0], grupo.ys[grupo.ys.length - 1]];
+    campo.textContent = JSON.stringify(Object.assign(resumo, {
+      colunas: (colunas || []).map(coluna => `${coluna.r}: ${coluna.tipo} ${coluna.linhas.map(l => l + 1).join('+')}`),
+      vf: (vf || []).map(item => `${item.r}:${item.valor || '-'}`).join(' '),
+      publicacao: { publicadaEm: estado.pub.publicadoEm, qr, num: trilho(num), tabelaVF: trilho(tabelaVF) }
+    }), null, 1);
+    const baixar = document.createElement('a');
+    baixar.textContent = 'Baixar esta imagem';
+    baixar.download = 'leitura.jpg';
+    baixar.href = quadro.toDataURL('image/jpeg', 0.9);
+    campo.prepend(baixar, document.createElement('br'));
+  }
+
+  async function processarFolha(medidas, folha) {
+    mostrarEstadoCamera('Lendo a folha…');
+    await pausa(20);
+    const quadro = quadroDoVideo(CAMERA.LADO_LEITURA);
+    if (!quadro) return;
+    let leitura;
+    try {
+      leitura = lerFolha(quadro, medidas);
+    } catch (erro) {
+      console.error(erro);
+      leitura = { erro: 'Falha na leitura: ' + erro.message };
+    }
+    mostrarDiagnostico(leitura, quadro);
+    if (leitura.erro || leitura.recusa.length) {
+      const pequena = !leitura.erro && leitura.recusa.includes('a folha ficou pequena na imagem');
+      mostrarEstadoCamera(leitura.erro || (pequena ? 'Aproxime a folha da câmera.' : 'Tire a mão ou a sombra da folha e aguarde.'), 'atencao');
+      await pausa(leitura.erro ? CAMERA.PAUSA_ERRO_MS : CAMERA.PAUSA_RECUSA_MS);
+      return;
+    }
+    if (modo === 'massa') {
+      const confirmada = leituraConfirmada(leitura);
+      if (confirmada) await corrigirFolha(confirmada, folha);
+      else mostrarEstadoCamera('Conferindo a leitura…');
+      return;
+    }
+    pararEspera();
+    camera.leitura = leitura;
+    if (/^\d{6}$/.test(leitura.qr || '')) {
+      estado.codigo = leitura.qr;
+      entrar(true);
+    } else {
+      abrirTelaCodigo('', 'A folha foi lida, mas o QR não. Digite o código impresso na folha.');
+    }
+  }
+
+  /* ----------------------------- Correção em massa ----------------------------- */
+  /* O professor deixa o aparelho no suporte e vai trocando as folhas. Sem aluno para conferir, a folha só é
+   * salva quando duas leituras seguidas dão o mesmo resultado, sem dúvidas. O cartão verde some sozinho
+   * quando a próxima folha aparece; os que precisam do professor esperam um toque, para nenhuma folha
+   * passar sem correção. Usa as mesmas funções do aluno: uma prova já entregue nunca é regravada. */
+  const massa = { corrigidas: new Set(), leitura: null, diferentes: 0 };
+
+  function esquecerLeituraDaMassa() {
+    massa.leitura = null;
+    massa.diferentes = 0;
+  }
+
+  const assinaturaDaLeitura = leitura => JSON.stringify([
+    leitura.qr, leitura.colunas.map(coluna => [coluna.r, coluna.tipo, coluna.linhas, Boolean(coluna.nda)]), leitura.vf.map(item => [item.r, item.valor])
+  ]);
+
+  /* Devolve a leitura que pode seguir ou null para ler de novo. Se as leituras nunca coincidirem (uma marca
+   * no limite, por exemplo), segue a última, com o que mudou em dúvida para o professor conferir. */
+  function leituraConfirmada(leitura) {
+    const anterior = massa.leitura;
+    const iguais = anterior && assinaturaDaLeitura(anterior) === assinaturaDaLeitura(leitura);
+    if (anterior && !iguais) massa.diferentes += 1;
+    if (!iguais && massa.diferentes < CAMERA.LEITURAS_DIFERENTES) {
+      massa.leitura = leitura;
+      return null;
+    }
+    esquecerLeituraDaMassa();
+    return iguais ? leitura : comDiferencasEmDuvida(anterior, leitura);
+  }
+
+  function comDiferencasEmDuvida(anterior, leitura) {
+    const colunas = new Map(anterior.colunas.map(coluna => [coluna.r, coluna]));
+    const itens = new Map(anterior.vf.map(item => [item.r, item.valor]));
+    return Object.assign({}, leitura, {
+      colunas: leitura.colunas.map(coluna => {
+        const outra = colunas.get(coluna.r);
+        if (outra && outra.tipo === coluna.tipo && Boolean(outra.nda) === Boolean(coluna.nda) && String(outra.linhas) === String(coluna.linhas)) return coluna;
+        const ndaDuvida = Boolean(coluna.nda || (outra && outra.nda) || coluna.tipo === 'nda' || (outra && outra.tipo === 'nda'));
+        return { r: coluna.r, tipo: 'duvida', nda: ndaDuvida, linhas: [...new Set([...coluna.linhas, ...(outra ? outra.linhas : [])])] };
+      }),
+      vf: leitura.vf.map(item => (itens.get(item.r) === item.valor ? item : { r: item.r, valor: '?' }))
+    });
+  }
+
+  function atualizarFaixaMassa() {
+    const ativa = modo === 'massa';
+    el('telaCamera').classList.toggle('em-massa', ativa);
+    el('faixaMassa').hidden = !ativa;
+    if (!ativa) return;
+    el('provaMassa').textContent = estado.pub.prova;
+    el('contagemMassa').textContent = `${massa.corrigidas.size} de ${estado.pub.nAlunos} corrigidas agora`;
+  }
+
+  function mostrarCartaoMassa({ classe, titulo, nome, nota, texto, botoes }) {
+    const cartao = el('cartaoMassa');
+    cartao.className = 'cartao-massa ' + classe;
+    cartao.innerHTML = `<p class="massa-titulo">${esc(titulo)}</p>` +
+      (nome ? `<p class="massa-nome">${esc(nome)}</p>` : '') +
+      (nota ? `<p class="massa-nota">Nota ${esc(nota)}</p>` : '') +
+      (texto ? `<p class="massa-texto">${esc(texto)}</p>` : '') +
+      (botoes ? '<div class="linha-botoes"></div>' : '');
+    if (botoes) montarBotoes(cartao.querySelector('.linha-botoes'), botoes, ocultarCartaoMassa);
+    cartao.hidden = false;
+  }
+
+  function ocultarCartaoMassa() { el('cartaoMassa').hidden = true; }
+
+  function retomarMassa() {
+    if (modo === 'massa' && !camera.ciclo && !el('telaCamera').hidden) iniciarEspera();
+  }
+
+  function lerDeNovoNaMassa() {
+    camera.retirar = false;
+    camera.posicaoLida = null;
+    retomarMassa();
+  }
+
+  function folhaSalva(codigo, nome, nota) {
+    massa.corrigidas.add(codigo);
+    atualizarFaixaMassa();
+    mostrarCartaoMassa({ classe: 'ok', titulo: '✓ Folha lida', nome, nota, texto: '✓ Salvo na planilha' });
+    mostrarEstadoCamera('Coloque a próxima folha.', 'ok');
+    retomarMassa();
+  }
+
+  /* Fora a folha salva ou já entregue, a câmera para aqui até o professor escolher o que fazer. */
+  function pedirDecisaoNaMassa(classe, titulo, nome, texto, botoes) {
+    pararEspera();
+    mostrarEstadoCamera('Esta folha precisa de você.', 'atencao');
+    mostrarCartaoMassa({ classe, titulo, nome, texto, botoes });
+  }
+
+  async function corrigirFolha(leitura, folha) {
+    const codigo = leitura.qr;
+    camera.retirar = true;
+    camera.codigoLido = codigo;
+    if (folha) camera.posicaoLida = folha;
+    const lerDeNovo = { rotulo: 'Ler de novo', acao: lerDeNovoNaMassa };
+    if (!/^\d{6}$/.test(codigo || '')) {
+      pedirDecisaoNaMassa('atencao', 'A folha foi lida, mas o QR não', '', '', [
+        { rotulo: 'Digitar o código', classe: 'primario', acao: () => { camera.leitura = leitura; abrirTelaCodigo(); } },
+        lerDeNovo
+      ]);
+      return;
+    }
+    const falhou = texto => pedirDecisaoNaMassa('falha', 'Esta folha não foi salva', '', texto, [
+      { rotulo: 'Tentar de novo', classe: 'primario', acao: () => corrigirFolha(leitura) },
+      { rotulo: 'Pular esta folha', acao: retomarMassa }
+    ]);
+    mostrarCartaoMassa({ classe: 'ok', titulo: '✓ Folha lida', texto: 'Salvando…' });
+    mostrarEstadoCamera('Salvando…');
+    try {
+      const d = JSON.parse(await pedirAoGAS('entrarNaConsulta', [estado.pub.id, codigo]));
+      if (d.status !== 'ok') { falhou(d.mensagem); return; }
+      if (d.entregue) {
+        massa.corrigidas.add(codigo);
+        atualizarFaixaMassa();
+        mostrarCartaoMassa({ classe: 'atencao', titulo: 'Esta prova já estava entregue', nome: d.nome, nota: d.resultado.nota, texto: 'Nada foi alterado.' });
+        mostrarEstadoCamera('Coloque a próxima folha.');
+        retomarMassa();
+        return;
+      }
+      aplicarLeitura(leitura, d);
+      if (estado.duvidas.size || !estado.marcadas.size) {
+        const rotulos = [...d.colunas, ...d.vf].filter(item => estado.duvidas.has(item.c)).map(item => item.r);
+        pedirDecisaoNaMassa('atencao', 'Confira esta folha', d.nome, rotulos.length ? 'Dúvida em ' + rotulos.join(', ') : 'Nenhuma marca foi lida.', [
+          { rotulo: 'Conferir na tela', classe: 'primario', acao: () => { camera.leitura = leitura; estado.dados = d; estado.codigo = codigo; abrirRespostas(); } },
+          lerDeNovo
+        ]);
+        return;
+      }
+      const r = JSON.parse(await pedirAoGAS('enviarRespostasDaConsulta', [estado.pub.id, codigo, JSON.stringify(Array.from(estado.marcadas.entries())), 'entregar']));
+      if (r.status !== 'ok') { falhou(r.mensagem); return; }
+      folhaSalva(codigo, d.nome, r.nota);
+    } catch (erro) {
+      falhou('Falha de conexão. A leitura continua guardada.');
+    }
+  }
+
+  async function iniciarMassa() {
+    const ok = await confirmar('Correção em massa', 'Cada folha lida será entregue e a nota será salva, sem a conferência do aluno. Depois disso, ele não poderá mais mudar as respostas nem pedir feedback. Use depois da prova.', 'Começar');
+    if (!ok) return;
+    modo = 'massa';
+    carregarProvas();
+  }
+
+  el('btnDigitarCodigo').addEventListener('click', () => { pararEspera(); ocultarCartaoMassa(); camera.leitura = null; abrirTelaCodigo(); });
+  el('btnTrocarModo').addEventListener('click', escolherModo);
+  el('btnModoManual').addEventListener('click', () => { modo = 'manual'; carregarProvas(); });
+  el('btnModoCamera').addEventListener('click', () => { modo = 'camera'; carregarProvas(); });
+  el('btnModoMassa').addEventListener('click', iniciarMassa);
+  el('btnMassaDireto').addEventListener('click', () => { escolherModo(); iniciarMassa(); });
+
+  function escolherModo() {
+    desligarCamera();
+    camera.pubId = null;
+    camera.leitura = null;
+    camera.retirar = false;
+    camera.posicaoLida = null;
+    massa.corrigidas.clear();
+    esquecerLeituraDaMassa();
+    ocultarCartaoMassa();
+    modo = null;
+    tabletLiberado = true;
+    atualizarTelaCheia();
+    mostrarTela('telaModo');
+  }
+
+  /* ----------------------------- Habilitação do tablet ----------------------------- */
+  /* O professor entra com o Google e o GAS devolve uma chave que vale por algumas horas. O tablet guarda
+   * só essa chave: o token do Google é descartado e o professor sai da conta antes de entregar o tablet. */
+  const CHAVE_SALVA = 'consultaTablet';
+  const TENTATIVAS_LOGIN = 50;   /* 15 s esperando o script do Google carregar */
+  let botaoGoogleMontado = false;
+
+  function lerChaveSalva() {
+    try {
+      const salva = JSON.parse(localStorage.getItem(CHAVE_SALVA));
+      if (salva && salva.validade > Date.now()) chaveDoTablet = salva.chave;
+    } catch (erro) { /* sem armazenamento: o professor entra de novo */ }
+    return !!chaveDoTablet;
+  }
+
+  function guardarChave(chave, validade) {
+    chaveDoTablet = chave;
+    try { localStorage.setItem(CHAVE_SALVA, JSON.stringify({ chave, validade })); } catch (erro) { /* vale até recarregar a página */ }
+  }
+
+  function abrirHabilitacao(aviso) {
+    desligarCamera();
+    tabletLiberado = false;
+    atualizarTelaCheia();
+    el('avisoHabilitar').hidden = !aviso;
+    el('avisoHabilitar').textContent = aviso || '';
+    mostrarTela('telaHabilitar');
+    montarBotaoGoogle(TENTATIVAS_LOGIN);
+  }
+
+  function montarBotaoGoogle(tentativas) {
+    if (botaoGoogleMontado) return;
+    if (!window.google || !google.accounts) {
+      if (tentativas > 0) setTimeout(() => montarBotaoGoogle(tentativas - 1), 300);
+      else abrirHabilitacao('Não foi possível carregar o login do Google. Confira a internet e recarregue a página.');
+      return;
+    }
+    google.accounts.id.initialize({ client_id: CLIENT_ID_GOOGLE, callback: aoEntrarNoGoogle });
+    google.accounts.id.renderButton(el('botaoGoogle'), { theme: 'outline', size: 'large', text: 'signin_with', locale: 'pt-BR' });
+    botaoGoogleMontado = true;
+  }
+
+  async function aoEntrarNoGoogle(resposta) {
+    try {
+      const r = await chamar('habilitarTablet', [resposta.credential], 'Habilitando o tablet...');
+      if (r.status !== 'ok') throw new Error(r.mensagem);
+      guardarChave(r.chave, r.validade);
+      el('btnContinuar').disabled = true;
+      mostrarTela('telaSairDaConta');
+    } catch (erro) {
+      abrirHabilitacao(erro.message || String(erro));
+    }
+  }
+
+  /* Espera os tratamentos de erro da tela atual terminarem, para o pedido de login ficar por cima. */
+  function chaveVencida() {
+    chaveDoTablet = '';
+    try { localStorage.removeItem(CHAVE_SALVA); } catch (erro) { /* ignora */ }
+    setTimeout(() => abrirHabilitacao('A habilitação deste tablet venceu. O professor precisa entrar de novo.'), 0);
+  }
+
+  el('btnSairDaConta').addEventListener('click', () => {
+    window.open('https://accounts.google.com/Logout', '_blank');
+    el('btnContinuar').disabled = false;
+  });
+  el('btnContinuar').addEventListener('click', escolherModo);
+
+  registrarAtividade();
+  if (lerChaveSalva()) escolherModo(); else abrirHabilitacao();
+</script>
+</body>
+</html>
